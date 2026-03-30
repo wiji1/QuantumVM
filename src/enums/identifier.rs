@@ -7,7 +7,7 @@ static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Identifier {
     Identifier(String),
 }

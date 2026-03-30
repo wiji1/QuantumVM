@@ -1,8 +1,12 @@
 mod lexer;
 mod enums;
+mod parser;
+mod interpreter;
 
 use std::{env, fs};
+use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
+use crate::parser::Parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -12,9 +16,15 @@ fn main() {
 
     match file_content {
         Ok(content) => {
-            let mut runtime = Lexer::new(content);
-            runtime.start()
-
+            let mut lexer = Lexer::new(content);
+            lexer.start();
+            
+            let lexer_output = lexer.tokens;
+            let mut parser = Parser::new(lexer_output);
+            let program = parser.start().expect("TODO: panic message");
+            
+            let mut interpreter = Interpreter::new(program);
+            interpreter.start();
         }
         Err(error) => { panic!("{}", error); }
     }

@@ -3,32 +3,38 @@ use crate::enums::{TokenTrait, TokenType};
 use crate::enums::keyword::Keyword;
 use crate::enums::type_def::TypeDefinition;
 use crate::enums::identifier::Identifier;
+use crate::enums::literal::Literal;
 
 pub struct Lexer {
     payload: String,
     current_line: usize,
-    tokens: Vec<Token>,
+    pub tokens: Vec<Token>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Span {
     pub line: usize,
     pub col: usize,
     pub len: usize,
 }
 
+#[derive(Clone)]
 pub struct Token {
     pub kind: TokenType,
     pub span: Span
 }
 
-impl Lexer {
+impl Lexer  {
     pub(crate) fn new(payload: String) -> Lexer {
         Lexer { payload, current_line: 0, tokens: vec![] }
     }
 
     pub fn start(&mut self) {
         self.payload.clone().split("\n").for_each(|line| {
-            self.parse_line(line);
+            let mut owned_string = line.to_owned();
+            owned_string.push('\n');
+
+            self.parse_line(&owned_string);
             self.current_line += 1;
         });
 
@@ -74,6 +80,11 @@ impl Lexer {
 
                 self.tokens.push(Token { kind: TokenType::Symbol(token), span });
                 char_advance = advance;
+            } else if let Some((token, advance)) = Literal::try_parse(&line[pos..]) {
+                span.len = advance;
+
+                self.tokens.push(Token { kind: TokenType::Literal(token), span });
+                char_advance = advance;
             } else if let Some((token, advance)) = Identifier::try_parse(&line[pos..]) {
                 span.len = advance;
 
@@ -84,7 +95,4 @@ impl Lexer {
             pos += char_advance;
         }
     }
-
-
-
 }
