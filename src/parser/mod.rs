@@ -1,14 +1,18 @@
-use crate::enums::expression::Expr;
-use crate::enums::identifier::Identifier;
-use crate::enums::keyword::Keyword;
-use crate::enums::literal::Literal;
-use crate::enums::parse_error::ParseError;
-use crate::enums::statement::Stmt;
-use crate::enums::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, UnaryOp};
-use crate::enums::symbol::{CompoundSymbol, Symbol};
-use crate::enums::type_def::TypeDefinition;
-use crate::enums::TokenType;
-use crate::lexer::Token;
+pub mod expression;
+pub mod statement;
+pub mod parse_error;
+pub mod supporting_types;
+
+use crate::parser::expression::Expr;
+use crate::parser::parse_error::ParseError;
+use crate::parser::statement::Stmt;
+use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, UnaryOp};
+use crate::lexer::identifier::Identifier;
+use crate::lexer::keyword::Keyword;
+use crate::lexer::literal::Literal;
+use crate::lexer::symbol::{CompoundSymbol, Symbol};
+use crate::lexer::type_def::TypeDefinition;
+use crate::lexer::{TokenType, Token};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {

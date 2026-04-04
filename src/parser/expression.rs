@@ -1,4 +1,4 @@
-use crate::enums::supporting_types::{BinaryOp, ClassicalType, GateOperand, IndexedIdent, UnaryOp};
+use crate::parser::supporting_types::{BinaryOp, ClassicalType, GateOperand, IndexedIdent, UnaryOp};
 
 #[derive(Debug, Clone)]
 pub enum Expr {

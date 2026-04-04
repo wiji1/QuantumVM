@@ -1,5 +1,5 @@
-use crate::enums::{match_keyword, TokenTrait};
-use crate::enums::supporting_types::ClassicalType;
+use crate::lexer::{match_keyword, TokenTrait};
+use crate::parser::supporting_types::ClassicalType;
 
 #[derive(Debug, Clone)]
 pub enum TypeDefinition {

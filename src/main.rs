@@ -1,5 +1,4 @@
 mod lexer;
-mod enums;
 mod parser;
 mod interpreter;
 

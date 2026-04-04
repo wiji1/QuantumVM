@@ -1,4 +1,4 @@
-use crate::enums::statement::Stmt;
+use crate::parser::statement::Stmt;
 use crate::parser::Program;
 
 pub struct Interpreter {

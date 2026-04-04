@@ -1,4 +1,4 @@
-use crate::enums::{match_keyword, TokenTrait};
+use crate::lexer::{match_keyword, TokenTrait};
 
 #[derive(Debug, Clone)]
 pub enum Keyword {

@@ -1,6 +1,6 @@
-use crate::enums::expression::Expr;
-use crate::enums::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent};
-use crate::enums::type_def::TypeDefinition;
+use crate::parser::expression::Expr;
+use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent};
+use crate::lexer::type_def::TypeDefinition;
 
 #[derive(Debug, Clone)]
 pub enum Stmt {

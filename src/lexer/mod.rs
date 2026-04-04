@@ -1,9 +1,38 @@
-use crate::enums::symbol::{CompoundSymbol, Symbol};
-use crate::enums::{TokenTrait, TokenType};
-use crate::enums::keyword::Keyword;
-use crate::enums::type_def::TypeDefinition;
-use crate::enums::identifier::Identifier;
-use crate::enums::literal::Literal;
+pub mod symbol;
+pub mod keyword;
+pub mod type_def;
+pub mod identifier;
+pub mod literal;
+
+use symbol::{CompoundSymbol, Symbol};
+use keyword::Keyword;
+use type_def::TypeDefinition;
+use identifier::Identifier;
+use literal::Literal;
+
+pub(crate) trait TokenTrait: Sized {
+    fn try_parse(input: &str) -> Option<(Self, usize)>;
+}
+
+#[derive(Debug, Clone)]
+pub enum TokenType {
+    Symbol(Symbol),
+    CompoundSymbol(CompoundSymbol),
+    TypeDef(TypeDefinition),
+    Keyword(Keyword),
+    Identifier(Identifier),
+    Literal(Literal)
+}
+
+pub(crate) fn match_keyword(input: &str, keyword: &str) -> Option<usize> {
+    if input.starts_with(keyword) {
+        let next_char = input.chars().nth(keyword.len());
+        if next_char.map_or(true, |c| !c.is_alphanumeric() && c != '_') {
+            return Some(keyword.len());
+        }
+    }
+    None
+}
 
 pub struct Lexer {
     payload: String,

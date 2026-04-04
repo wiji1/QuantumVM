@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 use regex::Regex;
-use crate::enums::{match_keyword, TokenTrait};
+use crate::lexer::{match_keyword, TokenTrait};
 
 static FLOAT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]*\.[0-9]+([eE][+-]?[0-9]+)?|^[0-9]+[eE][+-]?[0-9]+").unwrap()

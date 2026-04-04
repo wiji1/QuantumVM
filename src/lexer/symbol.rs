@@ -1,8 +1,7 @@
 use std::sync::LazyLock;
 use regex::Regex;
-use crate::enums::{TokenTrait, TokenType};
-use crate::enums::expression::Expr::Binary;
-use crate::enums::supporting_types::BinaryOp;
+use crate::lexer::TokenTrait;
+use crate::parser::supporting_types::BinaryOp;
 
 #[derive(Debug, Clone)]
 pub enum Symbol {

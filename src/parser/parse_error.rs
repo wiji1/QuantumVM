@@ -1,5 +1,4 @@
-use crate::enums::TokenType;
-use crate::lexer::Span;
+use crate::lexer::{TokenType, Span};
 use std::fmt;
 
 #[derive(Debug)]
