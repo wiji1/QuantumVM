@@ -74,6 +74,7 @@ impl Lexer  {
         }
     }
 
+    //TODO: Clean uo this code
     fn parse_line(&mut self, line: &str) {
         let mut pos = 0;
 

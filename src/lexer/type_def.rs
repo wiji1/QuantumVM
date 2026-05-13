@@ -1,15 +1,21 @@
+use crate::interpreter::runtime_error::RuntimeError;
+use crate::interpreter::value::Value;
 use crate::lexer::{match_keyword, TokenTrait};
+use crate::parser::expression::Expr;
+use crate::parser::parse_error::ParseError;
 use crate::parser::supporting_types::ClassicalType;
 
 #[derive(Debug, Clone)]
 pub enum TypeDefinition {
     Qubit, //TODO: Move this to new enum called QuantumTypeDefinition
+    Bool,
     Bit,
     Int,
     UInt,
     Float,
     Angle,
     Complex,
+    Duration,
     Array,
     Void,
 }
@@ -19,6 +25,9 @@ impl TokenTrait for TypeDefinition {
     fn try_parse(input: &str) -> Option<(Self, usize)> {
         if let Some(len) = match_keyword(input, "qubit") {
             return Some((Self::Qubit, len));
+        }
+        if let Some(len) = match_keyword(input, "bool") {
+            return Some((Self::Bool, len));
         }
         if let Some(len) = match_keyword(input, "bit") {
             return Some((Self::Bit, len));
@@ -38,6 +47,9 @@ impl TokenTrait for TypeDefinition {
         if let Some(len) = match_keyword(input, "complex") {
             return Some((Self::Complex, len));
         }
+        if let Some(len) = match_keyword(input, "duration") {
+            return Some((Self::Complex, len));
+        }
         if let Some(len) = match_keyword(input, "array") {
             return Some((Self::Array, len));
         }
@@ -51,13 +63,19 @@ impl TokenTrait for TypeDefinition {
 impl TypeDefinition {
     pub fn get_classical_type(&self) -> Option<ClassicalType> {
         match self {
+            TypeDefinition::Bool => Some(ClassicalType::Bool(None)),
             TypeDefinition::Bit => Some(ClassicalType::Bit(None)),
             TypeDefinition::Int => Some(ClassicalType::Int(None)),
             TypeDefinition::UInt => Some(ClassicalType::UInt(None)),
             TypeDefinition::Float => Some(ClassicalType::Float(None)),
             TypeDefinition::Angle => Some(ClassicalType::Angle(None)),
             TypeDefinition::Complex => Some(ClassicalType::Complex(None)),
+            TypeDefinition::Duration => Some(ClassicalType::Duration(None)),
             _ => None,
         }
+    }
+
+    pub fn get_default_value(&self, size: Option<Expr>) -> Result<Value, RuntimeError> {
+        self.get_classical_type().unwrap().get_default_value(size)
     }
 }

@@ -1,6 +1,6 @@
 OPENQASM 3.0;
- qubit[4] q;
- int n = 2;
- for int i in {0, n, n+1} {
-     h q[i];
- }
+array[int, 4] a = {1, 2, 3, 4};
+int total = 0;
+for int x in a {
+    total = total + x;
+}

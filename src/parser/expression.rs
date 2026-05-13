@@ -1,3 +1,4 @@
+use std::fmt::Formatter;
 use crate::parser::supporting_types::{BinaryOp, ClassicalType, GateOperand, IndexedIdent, UnaryOp};
 
 #[derive(Debug, Clone)]
@@ -7,6 +8,8 @@ pub enum Expr {
     Bool(bool),
     Imaginary(f64),
     Timing(String),
+    Bits(u64, usize),
+    Array(Box<Vec<Expr>>),
 
     Ident(String),
     IndexedIdent(IndexedIdent),
@@ -23,4 +26,10 @@ pub enum Expr {
     Cast { ty: Box<ClassicalType>, expr: Box<Expr> },
 
     Range { start: Option<Box<Expr>>, stop: Option<Box<Expr>>, step: Option<Box<Expr>> },
+}
+
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
 }

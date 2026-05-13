@@ -3,16 +3,16 @@ pub mod statement;
 pub mod parse_error;
 pub mod supporting_types;
 
-use crate::parser::expression::Expr;
-use crate::parser::parse_error::ParseError;
-use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, UnaryOp};
 use crate::lexer::identifier::Identifier;
 use crate::lexer::keyword::Keyword;
 use crate::lexer::literal::Literal;
 use crate::lexer::symbol::{CompoundSymbol, Symbol};
 use crate::lexer::type_def::TypeDefinition;
-use crate::lexer::{TokenType, Token};
+use crate::lexer::{Token, TokenType};
+use crate::parser::expression::Expr;
+use crate::parser::parse_error::ParseError;
+use crate::parser::statement::Stmt;
+use crate::parser::supporting_types::{AssignOp, ForIter, GateOperand, IndexedIdent, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -92,7 +92,7 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
 
-        println!("{}", version.clone().unwrap());
+        println!("{}", version.as_ref().expect("Version missing!"));
         for x in &statements {
             println!("{:?}", x)
         }
@@ -156,6 +156,14 @@ impl Parser {
                     Literal::Boolean(b) => { Expr::Bool(b) }
                     Literal::Imaginary(i) => { Expr::Imaginary(i) }
                     Literal::Timing(t) => { Expr::Timing(t) }
+                    Literal::Bitstring(s) => {
+                        let width = s.len();
+                        let value = u64::from_str_radix(&s, 2).map_err(|_| ParseError::InvalidLiteral {
+                            message: format!("invalid bitstring: {}", s),
+                            span: token.span.clone(),
+                        })?;
+                        Expr::Bits(value, width)
+                    }
                     _ => {
                         return Err(ParseError::InvalidLiteral {
                             message: "not valid in expression context".to_string(),
@@ -206,6 +214,34 @@ impl Parser {
                 let expr = self.parse_expr(0)?;
                 expect_token!(self, TokenType::Symbol(Symbol::RParen));
                 expr
+            }
+            TokenType::Symbol(Symbol::LBrace) => {
+                self.advance();
+
+                let mut values = vec![];
+
+                loop {
+                    self.skip_trivia();
+
+                    if self.at(TokenType::Symbol(Symbol::RBrace)) {
+                        break;
+                    }
+
+                    if self.is_at_end() {
+                        break;
+                    }
+
+                    values.push(self.parse_expr(0)?);
+
+                    self.skip_trivia();
+
+                    if self.at(TokenType::Symbol(Symbol::Comma)) {
+                        self.advance();
+                    }
+                }
+
+                expect_token!(self, TokenType::Symbol(Symbol::RBrace));
+                Expr::Array(Box::from(values))
             }
             _ => return Err(ParseError::UnexpectedToken {
                 expected: TokenType::Literal(Literal::Integer(0)),
@@ -267,6 +303,7 @@ impl Parser {
 
         match self.peek().kind {
             TokenType::TypeDef(TypeDefinition::Qubit) => self.parse_quantum_decl(),
+            TokenType::TypeDef(TypeDefinition::Array) => self.parse_array_decl(),
             TokenType::TypeDef(_) => self.parse_classic_decl(),
             TokenType::Keyword(Keyword::Gate) => self.parse_gate_def(),
             TokenType::Keyword(Keyword::If) => self.parse_if(),
@@ -624,5 +661,49 @@ impl Parser {
            iter: iter?,
            body: Box::new(body),
         })
+    }
+
+    fn parse_array_decl(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::TypeDef(TypeDefinition::Array));
+        expect_token!(self, TokenType::Symbol(Symbol::LBracket));
+
+        let extracted_type = extract_token!(
+            self,
+            TokenType::TypeDef(t) => t,
+            TokenType::TypeDef(TypeDefinition::Int)
+        );
+
+        let type_size = self.extract_index_operand()?;
+
+        expect_token!(self, TokenType::Symbol(Symbol::Comma));
+
+        let expressions = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
+        expect_token!(self, TokenType::Symbol(Symbol::RBracket));
+
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+
+        let init = if self.at(TokenType::Symbol(Symbol::Equals)) {
+            self.advance();
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        let stmt = Stmt::ArrayDecl {
+            ty: extracted_type,
+            type_size: type_size,
+            name: name,
+            size: expressions,
+            init: init,
+        };
+
+        Ok(stmt)
     }
 }

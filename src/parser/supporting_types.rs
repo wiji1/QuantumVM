@@ -1,3 +1,6 @@
+use crate::interpreter::runtime_error::RuntimeError;
+use crate::interpreter::value::Value;
+use crate::lexer::type_def::TypeDefinition;
 use crate::parser::expression::Expr;
 
 #[derive(Debug, Clone)]
@@ -47,7 +50,28 @@ pub enum ClassicalType {
     UInt(Option<Expr>),
     Float(Option<Expr>),
     Angle(Option<Expr>),
-    Bool,
-    Duration,
+    Bool(Option<Expr>),
+    Duration(Option<Expr>),
     Complex(Option<Box<ClassicalType>>),
+}
+
+impl ClassicalType {
+    pub fn get_default_value(&self, size: Option<Expr>) -> Result<Value, RuntimeError> {
+        match self {
+            ClassicalType::Bit(_) => {
+                let width = match size {
+                    Some(Expr::Int(n)) => n as usize,
+                    None => 1,
+                    _ => return Err(RuntimeError::InvalidSize),
+                };
+
+                Ok(Value::Bits { value: 0, width })
+            },
+            ClassicalType::Int(_) => Ok(Value::Int(0)),
+            ClassicalType::UInt(_) => Ok(Value::Int(0)),
+            ClassicalType::Float(_) => Ok(Value::Float(0.0)),
+            ClassicalType::Bool(_) => Ok(Value::Bool(false)),
+            _ =>  Err(RuntimeError::UnsupportedType),
+        }
+    }
 }
