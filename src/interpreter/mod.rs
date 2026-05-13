@@ -5,9 +5,9 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{BinaryOp, ForIter, UnaryOp};
+use crate::parser::supporting_types::{BinaryOp, ForIter, IndexedIdent, UnaryOp};
 use crate::parser::Program;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::lexer::type_def::TypeDefinition;
 
 macro_rules! numeric_op {
@@ -60,11 +60,12 @@ macro_rules! comparison_op {
 pub struct Interpreter {
     program: Program,
     scopes: Vec<HashMap<String, Value>>,
+    constants: HashSet<String>
 }
 
 impl Interpreter {
     pub(crate) fn new(program: Program) -> Interpreter {
-        Interpreter { program, scopes: vec![] }
+        Interpreter { program, scopes: vec![], constants: HashSet::new() }
     }
 
     pub fn start(&mut self) {
@@ -78,13 +79,38 @@ impl Interpreter {
         self.pop_scope();
     }
 
-    fn define(&mut self, name: String, value: Value) {
+    fn define(&mut self, name: String, value: Value) -> Result<(), RuntimeError> {
+        if self.constants.contains(&name) {
+            return Err(RuntimeError::ConstAssignment(name.to_string()))
+        };
+
         self.scopes.last_mut().unwrap().insert(name, value);
+        Ok(())
+    }
+
+    fn assign(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        if self.constants.contains(name) {
+            return Err(RuntimeError::ConstAssignment(name.to_string()));
+        }
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), value);
+                return Ok(());
+            }
+        }
+        Err(RuntimeError::UndefinedVariable(name.to_string()))
     }
 
     fn lookup(&self, name: &str) -> Option<&Value> {
         for scope in self.scopes.iter().rev() {
             if let Some(val) = scope.get(name) { return Some(val); }
+        }
+        None
+    }
+
+    fn lookup_mut(&mut self, name: &str) -> Option<&mut Value> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(val) = scope.get_mut(name) { return Some(val); }
         }
         None
     }
@@ -102,7 +128,7 @@ impl Interpreter {
             Stmt::QuantumDecl { .. } => todo!(),
             Stmt::ClassicalDecl { .. } => self.interpret_classical_declaration(stmt),
             Stmt::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
-            Stmt::ConstDecl { .. } => todo!(),
+            Stmt::ConstDecl { .. } => self.interpret_const_declaration(stmt),
             Stmt::GateCall { .. } => todo!(),
             Stmt::Measure { .. } => todo!(),
             Stmt::Reset { .. } => todo!(),
@@ -139,7 +165,7 @@ impl Interpreter {
             None => default_value,
         };
 
-        self.define(name.to_string(), init_value);
+        self.define(name.to_string(), init_value)?;
 
         Ok(())
     }
@@ -165,7 +191,7 @@ impl Interpreter {
             None => self.default_array(ty, type_size, &dimensions)?
         };
 
-        self.define(name.clone(), value);
+        self.define(name.clone(), value)?;
         Ok(())
     }
 
@@ -177,6 +203,18 @@ impl Interpreter {
             .map(|_| self.default_array(ty, type_size, &dimensions[1..]))
             .collect();
         Ok(Value::Array(inner?))
+    }
+
+    fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        let Stmt::ConstDecl { ty, name, size, init } = stmt else {
+            unreachable!("Incorrect statement signature!");
+        };
+
+        let init_value = self.evaluate_expression(init)?;
+        self.define(name.to_string(), init_value)?;
+        self.constants.insert(name.to_string());
+
+        Ok(())
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
@@ -192,7 +230,7 @@ impl Interpreter {
             Expr::Ident(name) => {
                 self.lookup(name).cloned().ok_or(RuntimeError::UndefinedVariable(name.clone()))
             }
-            Expr::IndexedIdent(_) => { todo!() }
+            Expr::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
             Expr::Measure(_) => { todo!() }
             Expr::Unary { .. } => { self.evaluate_unary(expr) }
             Expr::Binary { .. } => { self.evaluate_binary(expr) }
@@ -210,6 +248,25 @@ impl Interpreter {
         }
 
         Ok(Value::Array(vec))
+    }
+
+    fn evaluate_indexed_ident(&mut self, ident: &IndexedIdent) -> Result<Value, RuntimeError> {
+        let mut value = self.lookup(&ident.name).cloned().ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
+
+        for expr in &ident.indices {
+            let index = match self.evaluate_expression(expr)? {
+                Value::Int(i) => i,
+                _ => Err(RuntimeError::TypeMismatch("index must be int".to_string()))?,
+            };
+
+            value = match value {
+                Value::Array(arr) => arr.clone().into_iter().nth(index as usize)
+                    .ok_or(RuntimeError::IndexOutOfBounds(index as usize, arr.len()))?,
+                _ => Err(RuntimeError::TypeMismatch("cannot index non-array".to_string()))?
+            }
+        }
+
+        Ok(value)
     }
 
     fn evaluate_unary(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
@@ -296,14 +353,52 @@ impl Interpreter {
 
         let evaluated = self.evaluate_expression(value)?;
 
-        for scope in self.scopes.iter_mut().rev() {
-            if scope.contains_key(&target.name) {
-                scope.insert(target.name.clone(), evaluated);
-                return Ok(());
+        if target.indices.is_empty() {
+            for scope in self.scopes.iter_mut().rev() {
+                if scope.contains_key(&target.name) {
+                    scope.insert(target.name.clone(), evaluated);
+                    return Ok(());
+                }
+            }
+            Err(RuntimeError::UndefinedVariable(target.name.clone()))
+        } else {
+            self.assign_indexed(&target.name, &target.indices, evaluated)
+        }
+    }
+
+    fn assign_indexed(&mut self, name: &str, indices: &[Expr], value: Value) -> Result<(), RuntimeError> {
+        let evaluated_indices: Vec<usize> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
+            Ok(Value::Int(i)) => Ok(i as usize),
+            Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
+            Err(e) => Err(e),
+        }).collect::<Result<Vec<usize>, RuntimeError>>()?;
+
+        let arr = self.lookup_mut(name);
+        match arr {
+            Some(Value::Array(a)) => {
+                Self::set_nested_evaluated(a.as_mut(), &evaluated_indices, value)?;
+                Ok(())
+            }
+            Some(_) => { Err(RuntimeError::TypeMismatch("only arrays can be index assigned".to_string())) }
+            None => { Err(RuntimeError::NullPointer) }
+        }
+    }
+
+    fn set_nested_evaluated(arr: &mut Vec<Value>, indices: &[usize], value: Value) -> Result<(), RuntimeError> {
+        let index = indices[0];
+
+        let len = arr.len();
+        let elem = arr.get_mut(index).ok_or(RuntimeError::IndexOutOfBounds(index, len))?;
+
+        if indices.len() == 1 { *elem = value }
+        else {
+            match elem {
+                Value::Array(inner) => Self::set_nested_evaluated(inner, &indices[1..], value)?,
+                _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
             }
         }
 
-        Err(RuntimeError::UndefinedVariable(target.name.clone()))
+        Ok(())
     }
 
     fn interpret_if(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
@@ -374,7 +469,7 @@ impl Interpreter {
                 for expr in exprs.iter() {
                     self.push_scope();
                     let evaluated = self.evaluate_expression(expr)?;
-                    self.define(var.clone(), evaluated);
+                    self.define(var.clone(), evaluated)?;
                     self.interpret_statements(body)?;
                     self.pop_scope();
                 }
@@ -390,7 +485,7 @@ impl Interpreter {
                     _ => return Err(RuntimeError::TypeMismatch("range start must be int".to_string())),
                 };
 
-                self.define(var.clone(), Value::Int(start_int));
+                self.define(var.clone(), Value::Int(start_int))?;
 
                 let stop_int = match stop {
                     Some(expr) => match self.evaluate_expression(expr)? {
@@ -422,7 +517,7 @@ impl Interpreter {
                     self.interpret_statements(body)?;
                     self.pop_scope();
 
-                    self.define(var.clone(), Value::Int(current_int + step_int));
+                    self.assign(var, Value::Int(current_int + step_int))?;
                 }
             }
             ForIter::Expr(expr) => {
@@ -435,7 +530,7 @@ impl Interpreter {
 
                 for value in values.iter() {
                     self.push_scope();
-                    self.define(var.clone(), value.clone());
+                    self.define(var.clone(), value.clone())?;
                     self.interpret_statements(body)?;
                     self.pop_scope();
                 }

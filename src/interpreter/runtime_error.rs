@@ -6,4 +6,6 @@ pub enum RuntimeError {
     NullPointer,
     InvalidSize,
     UnsupportedType,
+    ConstAssignment(String),
+    IndexOutOfBounds(usize, usize),
 }

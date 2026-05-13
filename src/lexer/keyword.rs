@@ -11,7 +11,8 @@ pub enum Keyword {
     Barrier,
     For,
     While,
-    In
+    In,
+    Const
 }
 
 impl TokenTrait for Keyword {

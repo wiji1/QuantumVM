@@ -187,9 +187,16 @@ impl Parser {
                     }
                     expect_token!(self, TokenType::Symbol(Symbol::RParen));
                     Expr::Call { name: s, args }
-                } else {
-                    Expr::Ident(s)
-                }
+                } else if self.at(TokenType::Symbol(Symbol::LBracket)) {
+                    let mut indices = vec![];
+                    while self.at(TokenType::Symbol(Symbol::LBracket)) {
+                        if let Some(idx) = self.extract_index_operand()? {
+                            indices.push(idx);
+                        }
+                    }
+                    if indices.is_empty() { Expr::Ident(s) }
+                    else { Expr::IndexedIdent(IndexedIdent { name: s, indices }) }
+                } else { Expr::Ident(s) }
             }
             TokenType::Symbol(Symbol::Minus)
             | TokenType::Symbol(Symbol::Tilde)
@@ -305,6 +312,7 @@ impl Parser {
             TokenType::TypeDef(TypeDefinition::Qubit) => self.parse_quantum_decl(),
             TokenType::TypeDef(TypeDefinition::Array) => self.parse_array_decl(),
             TokenType::TypeDef(_) => self.parse_classic_decl(),
+            TokenType::Keyword(Keyword::Const) => self.parse_const_decl(),
             TokenType::Keyword(Keyword::Gate) => self.parse_gate_def(),
             TokenType::Keyword(Keyword::If) => self.parse_if(),
             TokenType::Keyword(Keyword::Reset) => self.parse_reset(),
@@ -315,6 +323,7 @@ impl Parser {
                 if self.cursor + 1 >= self.tokens.len() { return self.parse_assign() }
                 match &self.tokens[self.cursor + 1].kind {
                     TokenType::Symbol(Symbol::Equals) => self.parse_assign(),
+                    TokenType::Symbol(Symbol::LBracket) => self.parse_assign(),
                     _ => self.parse_gate_call()
                 }
             },
@@ -397,6 +406,29 @@ impl Parser {
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         Ok(Stmt::ClassicalDecl { ty: type_def, name, size, init })
+    }
+
+    fn parse_const_decl(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Const));
+
+        let type_def = extract_token!(
+            self,
+            TokenType::TypeDef(t) => t,
+            TokenType::TypeDef(TypeDefinition::Bit)
+        );
+
+        let size = self.extract_index_operand()?;
+
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+        let init = self.parse_expr(0)?;
+
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::ConstDecl { ty: type_def, name, size, init })
     }
 
     fn parse_gate_def(&mut self) -> Result<Stmt, ParseError> {
@@ -529,6 +561,13 @@ impl Parser {
             TokenType::Identifier(Identifier::Identifier(String::new()))
         );
 
+        let mut indices = vec![];
+        while self.at(TokenType::Symbol(Symbol::LBracket)) {
+            if let Some(idx) = self.extract_index_operand()? {
+                indices.push(idx);
+            }
+        }
+
         expect_token!(self, TokenType::Symbol(Symbol::Equals));
 
         let value = if self.at(TokenType::Keyword(Keyword::Measure)) {
@@ -540,10 +579,11 @@ impl Parser {
             self.parse_expr(0)?
         };
 
+
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::Assign {
-            target: IndexedIdent { name, indices: vec![] },
+            target: IndexedIdent { name, indices },
             op: AssignOp::Eq,
             value
         })

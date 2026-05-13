@@ -7,7 +7,7 @@ pub enum Stmt {
     QuantumDecl { name: String, size: Option<Expr> },
     ClassicalDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Option<Expr> },
     ArrayDecl { ty: TypeDefinition, type_size: Option<Expr>, name: String, size: Vec<Expr>, init: Option<Expr> },
-    ConstDecl { ty: ClassicalType, name: String, init: Expr },
+    ConstDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Expr },
 
     GateCall { name: String, params: Vec<Expr>, qubits: Vec<GateOperand> },
     Measure { qubit: GateOperand, target: Option<IndexedIdent> },
