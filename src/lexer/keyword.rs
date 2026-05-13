@@ -12,7 +12,10 @@ pub enum Keyword {
     For,
     While,
     In,
-    Const
+    Const,
+    Continue,
+    Break,
+    Return,
 }
 
 impl TokenTrait for Keyword {
@@ -46,6 +49,18 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "in") {
             return Some((Self::In, len));
+        }
+        if let Some(len) = match_keyword(input, "const") {
+            return Some((Self::Const, len));
+        }
+        if let Some(len) = match_keyword(input, "continue") {
+            return Some((Self::Continue, len));
+        }
+        if let Some(len) = match_keyword(input, "break") {
+            return Some((Self::Break, len));
+        }
+        if let Some(len) = match_keyword(input, "return") {
+            return Some((Self::Return, len));
         }
         None
     }

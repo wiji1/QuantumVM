@@ -17,8 +17,8 @@ pub enum Stmt {
     If { cond: Expr, then: Box<Vec<Stmt>>, else_: Option<Vec<Stmt>> },
     For { var: String, ty: ClassicalType, iter: ForIter, body: Box<Vec<Stmt>> },
     While { cond: Expr, body: Box<Vec<Stmt>> },
-    Break,
     Continue,
+    Break,
     Return(Option<Expr>),
 
     GateDef { name: String, params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },

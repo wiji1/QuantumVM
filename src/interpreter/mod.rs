@@ -1,5 +1,6 @@
 pub(crate) mod value;
 pub(crate) mod runtime_error;
+pub(crate) mod control_flow;
 
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
@@ -8,6 +9,7 @@ use crate::parser::statement::Stmt;
 use crate::parser::supporting_types::{BinaryOp, ForIter, IndexedIdent, UnaryOp};
 use crate::parser::Program;
 use std::collections::{HashMap, HashSet};
+use crate::interpreter::control_flow::ControlFlow;
 use crate::lexer::type_def::TypeDefinition;
 
 macro_rules! numeric_op {
@@ -72,30 +74,34 @@ impl Interpreter {
         self.push_scope();
 
         for stmt in self.program.statements.clone() {
-            self.interpret_statement(&stmt);
+            match self.interpret_statement(&stmt) {
+                Ok(ControlFlow::Return(_)) => break,
+                Ok(_) => {}
+                Err(e) => { println!("Runtime error: {:?}", e); break; }
+            }
         }
 
         println!("Full scopes: {:?}", self.scopes);
         self.pop_scope();
     }
 
-    fn define(&mut self, name: String, value: Value) -> Result<(), RuntimeError> {
+    fn define(&mut self, name: String, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(&name) {
             return Err(RuntimeError::ConstAssignment(name.to_string()))
         };
 
         self.scopes.last_mut().unwrap().insert(name, value);
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn assign(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+    fn assign(&mut self, name: &str, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(name) {
             return Err(RuntimeError::ConstAssignment(name.to_string()));
         }
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {
                 scope.insert(name.to_string(), value);
-                return Ok(());
+                return Ok(ControlFlow::None);
             }
         }
         Err(RuntimeError::UndefinedVariable(name.to_string()))
@@ -123,7 +129,7 @@ impl Interpreter {
         self.scopes.pop();
     }
 
-    fn interpret_statement(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         match stmt {
             Stmt::QuantumDecl { .. } => todo!(),
             Stmt::ClassicalDecl { .. } => self.interpret_classical_declaration(stmt),
@@ -136,24 +142,33 @@ impl Interpreter {
             Stmt::If { .. } => self.interpret_if(stmt),
             Stmt::For { .. } => self.interpret_for(stmt),
             Stmt::While { .. } => self.interpret_while(stmt),
-            Stmt::Break => todo!(),
-            Stmt::Continue => todo!(),
-            Stmt::Return(_) => todo!(),
+            Stmt::Continue => Ok(ControlFlow::Continue),
+            Stmt::Break => Ok(ControlFlow::Break),
+            Stmt::Return(expr) => {
+                let value = match expr {
+                    Some(e) => self.evaluate_expression(e)?,
+                    None => Value::Void,
+                };
+                Ok(ControlFlow::Return(value))
+            },
             Stmt::GateDef { .. } => todo!(),
             Stmt::Assign { .. } => self.interpret_assignment(stmt),
             Stmt::Block(_) => todo!(),
         }
     }
 
-    fn interpret_statements(&mut self, stmts: &[Stmt]) -> Result<(), RuntimeError> {
+    fn interpret_statements(&mut self, stmts: &[Stmt]) -> Result<ControlFlow, RuntimeError> {
         for stmt in stmts {
-            self.interpret_statement(stmt)?;
+            let flow = self.interpret_statement(stmt)?;
+            match flow {
+                ControlFlow::None => {}
+                other => return Ok(other),
+            }
         }
-
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn interpret_classical_declaration(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_classical_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::ClassicalDecl { ty, name, size, init } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -167,10 +182,10 @@ impl Interpreter {
 
         self.define(name.to_string(), init_value)?;
 
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn interpret_array_declaration(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_array_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::ArrayDecl { ty, type_size, name, size, init} = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -192,7 +207,7 @@ impl Interpreter {
         };
 
         self.define(name.clone(), value)?;
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
     fn default_array(&self, ty: &TypeDefinition, type_size: &Option<Expr>, dimensions: &[i64]) -> Result<Value, RuntimeError> {
@@ -205,7 +220,7 @@ impl Interpreter {
         Ok(Value::Array(inner?))
     }
 
-    fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::ConstDecl { ty, name, size, init } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -214,7 +229,7 @@ impl Interpreter {
         self.define(name.to_string(), init_value)?;
         self.constants.insert(name.to_string());
 
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
@@ -346,7 +361,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::Assign { target, op, value } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -357,7 +372,7 @@ impl Interpreter {
             for scope in self.scopes.iter_mut().rev() {
                 if scope.contains_key(&target.name) {
                     scope.insert(target.name.clone(), evaluated);
-                    return Ok(());
+                    return Ok(ControlFlow::None);
                 }
             }
             Err(RuntimeError::UndefinedVariable(target.name.clone()))
@@ -366,7 +381,7 @@ impl Interpreter {
         }
     }
 
-    fn assign_indexed(&mut self, name: &str, indices: &[Expr], value: Value) -> Result<(), RuntimeError> {
+    fn assign_indexed(&mut self, name: &str, indices: &[Expr], value: Value) -> Result<ControlFlow, RuntimeError> {
         let evaluated_indices: Vec<usize> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
             Ok(Value::Int(i)) => Ok(i as usize),
             Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
@@ -377,14 +392,14 @@ impl Interpreter {
         match arr {
             Some(Value::Array(a)) => {
                 Self::set_nested_evaluated(a.as_mut(), &evaluated_indices, value)?;
-                Ok(())
+                Ok(ControlFlow::None)
             }
             Some(_) => { Err(RuntimeError::TypeMismatch("only arrays can be index assigned".to_string())) }
             None => { Err(RuntimeError::NullPointer) }
         }
     }
 
-    fn set_nested_evaluated(arr: &mut Vec<Value>, indices: &[usize], value: Value) -> Result<(), RuntimeError> {
+    fn set_nested_evaluated(arr: &mut Vec<Value>, indices: &[usize], value: Value) -> Result<ControlFlow, RuntimeError> {
         let index = indices[0];
 
         let len = arr.len();
@@ -395,13 +410,13 @@ impl Interpreter {
             match elem {
                 Value::Array(inner) => Self::set_nested_evaluated(inner, &indices[1..], value)?,
                 _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
-            }
+            };
         }
 
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn interpret_if(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_if(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::If { cond, then, else_ } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -414,27 +429,27 @@ impl Interpreter {
 
         if bool {
             self.push_scope();
-            self.interpret_statements(then)?;
+            let flow = self.interpret_statements(then)?;
             self.pop_scope();
+
+            return Ok(flow);
         } else {
             match else_ {
                 Some(else_stmt) => {
                     self.push_scope();
-
-                    for else_stmt in else_stmt.iter() {
-                        self.interpret_statement(&else_stmt)?;
-                    }
-
+                    let flow = self.interpret_statements(else_stmt)?;
                     self.pop_scope();
+
+                    return Ok(flow);
                 },
                 None => {}
             }
         }
 
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn interpret_while(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_while(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::While { cond, body } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -448,18 +463,21 @@ impl Interpreter {
             }
 
             self.push_scope();
-
-            for stmt in body.iter() {
-                self.interpret_statement(&stmt)?;
-            }
-
+            let flow = self.interpret_statements(body)?;
             self.pop_scope();
+
+            match flow {
+                ControlFlow::None => {}
+                ControlFlow::Break => break,
+                ControlFlow::Continue => continue,
+                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+            }
         }
 
-        Ok(())
+        Ok(ControlFlow::None)
     }
 
-    fn interpret_for(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+    fn interpret_for(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::For { var, ty, iter, body } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
@@ -470,8 +488,15 @@ impl Interpreter {
                     self.push_scope();
                     let evaluated = self.evaluate_expression(expr)?;
                     self.define(var.clone(), evaluated)?;
-                    self.interpret_statements(body)?;
+                    let flow = self.interpret_statements(body)?;
                     self.pop_scope();
+
+                    match flow {
+                        ControlFlow::None => {}
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue => continue,
+                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                    }
                 }
             }
             ForIter::Range { start, stop, step } => {
@@ -514,10 +539,17 @@ impl Interpreter {
 
                     if current_int >= stop_int { break; }
                     self.push_scope();
-                    self.interpret_statements(body)?;
+                    let flow = self.interpret_statements(body)?;
                     self.pop_scope();
 
                     self.assign(var, Value::Int(current_int + step_int))?;
+
+                    match flow {
+                        ControlFlow::None => {}
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue => continue,
+                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                    }
                 }
             }
             ForIter::Expr(expr) => {
@@ -531,11 +563,18 @@ impl Interpreter {
                 for value in values.iter() {
                     self.push_scope();
                     self.define(var.clone(), value.clone())?;
-                    self.interpret_statements(body)?;
+                    let flow = self.interpret_statements(body)?;
                     self.pop_scope();
+
+                    match flow {
+                        ControlFlow::None => {}
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue => continue,
+                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                    }
                 }
             }
         }
-        Ok(())
+        Ok(ControlFlow::None)
     }
 }

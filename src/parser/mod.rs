@@ -319,6 +319,9 @@ impl Parser {
             TokenType::Keyword(Keyword::Barrier) => self.parse_barrier(),
             TokenType::Keyword(Keyword::While) => self.parse_while(),
             TokenType::Keyword(Keyword::For) => self.parse_for(),
+            TokenType::Keyword(Keyword::Continue) => self.parse_continue(),
+            TokenType::Keyword(Keyword::Break) => self.parse_break(),
+            TokenType::Keyword(Keyword::Return) => self.parse_return(),
             TokenType::Identifier(_) => {
                 if self.cursor + 1 >= self.tokens.len() { return self.parse_assign() }
                 match &self.tokens[self.cursor + 1].kind {
@@ -701,6 +704,31 @@ impl Parser {
            iter: iter?,
            body: Box::new(body),
         })
+    }
+
+    fn parse_continue(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Continue));
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::Continue)
+    }
+
+    fn parse_break(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Break));
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::Break)
+    }
+
+    fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Return));
+
+        let expr = match self.peek().kind {
+            TokenType::Symbol(Symbol::Semicolon) => { None }
+            _ => { Some(self.parse_expr(0)?) }
+        };
+
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        Ok(Stmt::Return(expr))
     }
 
     fn parse_array_decl(&mut self) -> Result<Stmt, ParseError> {
