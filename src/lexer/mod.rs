@@ -9,6 +9,7 @@ use keyword::Keyword;
 use type_def::TypeDefinition;
 use identifier::Identifier;
 use literal::Literal;
+use crate::lexer::symbol::CompoundAssignment;
 
 pub(crate) trait TokenTrait: Sized {
     fn try_parse(input: &str) -> Option<(Self, usize)>;
@@ -18,10 +19,11 @@ pub(crate) trait TokenTrait: Sized {
 pub enum TokenType {
     Symbol(Symbol),
     CompoundSymbol(CompoundSymbol),
+    CompoundAssignment(CompoundAssignment),
     TypeDef(TypeDefinition),
     Keyword(Keyword),
     Identifier(Identifier),
-    Literal(Literal)
+    Literal(Literal),
 }
 
 pub(crate) fn match_keyword(input: &str, keyword: &str) -> Option<usize> {
@@ -85,7 +87,12 @@ impl Lexer  {
                 Span { line: self.current_line, col: pos, len: 0 }
             };
 
-            if let Some((token, advance)) = CompoundSymbol::try_parse(&line[pos..]) {
+            if let Some((token, advance)) = CompoundAssignment::try_parse(&line[pos..]) {
+                span.len = advance;
+
+                self.tokens.push(Token { kind: TokenType::CompoundAssignment(token), span });
+                char_advance = advance;
+            } else if let Some((token, advance)) = CompoundSymbol::try_parse(&line[pos..]) {
                 span.len = advance;
 
                 self.tokens.push(Token { kind: TokenType::CompoundSymbol(token), span });

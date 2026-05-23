@@ -44,6 +44,30 @@ pub struct IndexedIdent {
 }
 
 #[derive(Debug, Clone)]
+pub enum ParamType {
+    Scalar(TypeDefinition, Option<Expr>),
+    Qubit(Option<Expr>),
+    ArrayRef {
+        mutable: bool,
+        element_ty: TypeDefinition,
+        element_size: Option<Expr>,
+        dimensions: ArrayDimensions,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum ArrayDimensions {
+    Explicit(Vec<Expr>),
+    Dim(Expr),
+}
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub ty: ParamType,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ClassicalType {
     Bit(Option<Expr>),
     Int(Option<Expr>),

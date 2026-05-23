@@ -16,9 +16,14 @@ pub enum Keyword {
     Continue,
     Break,
     Return,
+    Def,
+    ReadOnly,
+    Mutable,
+    Dim
 }
 
 impl TokenTrait for Keyword {
+    //TODO: Rewrite this; its nasty code
     fn try_parse(input: &str) -> Option<(Self, usize)> {
         if let Some(len) = match_keyword(input, "OPENQASM") {
             return Some((Self::OpenQASM, len));
@@ -61,6 +66,18 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "return") {
             return Some((Self::Return, len));
+        }
+        if let Some(len) = match_keyword(input, "def") {
+            return Some((Self::Def, len));
+        }
+        if let Some(len) = match_keyword(input, "readonly") {
+            return Some((Self::ReadOnly, len));
+        }
+        if let Some(len) = match_keyword(input, "mutable") {
+            return Some((Self::Mutable, len));
+        }
+        if let Some(len) = match_keyword(input, "dim") {
+            return Some((Self::Dim, len));
         }
         None
     }

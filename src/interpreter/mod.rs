@@ -1,15 +1,17 @@
 pub(crate) mod value;
 pub(crate) mod runtime_error;
 pub(crate) mod control_flow;
+mod function;
 
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{BinaryOp, ForIter, IndexedIdent, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ForIter, IndexedIdent, UnaryOp};
 use crate::parser::Program;
 use std::collections::{HashMap, HashSet};
 use crate::interpreter::control_flow::ControlFlow;
+use crate::interpreter::function::{get_default_functions, Function};
 use crate::lexer::type_def::TypeDefinition;
 
 macro_rules! numeric_op {
@@ -62,16 +64,23 @@ macro_rules! comparison_op {
 pub struct Interpreter {
     program: Program,
     scopes: Vec<HashMap<String, Value>>,
-    constants: HashSet<String>
+    constants: HashSet<String>,
+    functions: HashMap<String, Function>,
 }
 
 impl Interpreter {
     pub(crate) fn new(program: Program) -> Interpreter {
-        Interpreter { program, scopes: vec![], constants: HashSet::new() }
+        Interpreter { program, scopes: vec![], constants: HashSet::new(), functions: get_default_functions() }
     }
 
     pub fn start(&mut self) {
         self.push_scope();
+
+        let defaults_result = self.define_default_operations();
+        match defaults_result {
+            Ok(_) => {},
+            Err(e) => println!("Runtime error: {:?}", e)
+        };
 
         for stmt in self.program.statements.clone() {
             match self.interpret_statement(&stmt) {
@@ -105,6 +114,14 @@ impl Interpreter {
             }
         }
         Err(RuntimeError::UndefinedVariable(name.to_string()))
+    }
+
+    fn define_default_operations(&mut self) -> Result<(), RuntimeError> {
+        self.define("pi".to_string(), Value::Float(std::f64::consts::PI))?;
+        self.define("euler".to_string(), Value::Float(std::f64::consts::E))?;
+        self.define("tau".to_string(), Value::Float(std::f64::consts::TAU))?;
+
+        Ok(())
     }
 
     fn lookup(&self, name: &str) -> Option<&Value> {
@@ -144,6 +161,10 @@ impl Interpreter {
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
+            Stmt::ExpressionStatement(expr) => {
+                self.evaluate_expression(expr)?;
+                Ok(ControlFlow::None)
+            }
             Stmt::Return(expr) => {
                 let value = match expr {
                     Some(e) => self.evaluate_expression(e)?,
@@ -151,8 +172,24 @@ impl Interpreter {
                 };
                 Ok(ControlFlow::Return(value))
             },
-            Stmt::GateDef { .. } => todo!(),
+            Stmt::GateDef { name, params, qubits, body } => {
+                self.functions.insert(name.to_string(), Function::Gate {
+                    params: params.clone(),
+                    qubits: qubits.clone(),
+                    body: body.clone(),
+                });
+
+                Ok(ControlFlow::None)
+            },
             Stmt::Assign { .. } => self.interpret_assignment(stmt),
+            Stmt::Def { name, params, return_type, body } => {
+                self.functions.insert(name.clone(), Function::UserDefined {
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                    body: body.clone(),
+                });
+                Ok(ControlFlow::None)
+            }
             Stmt::Block(_) => todo!(),
         }
     }
@@ -250,7 +287,7 @@ impl Interpreter {
             Expr::Unary { .. } => { self.evaluate_unary(expr) }
             Expr::Binary { .. } => { self.evaluate_binary(expr) }
             Expr::Index { .. } => { todo!() }
-            Expr::Call { .. } => { todo!() }
+            Expr::Call { name, args } => { self.call_function(name, args) }
             Expr::Cast { .. } => { todo!() }
             Expr::Range { .. } => { todo!() }
         }
@@ -366,18 +403,52 @@ impl Interpreter {
             unreachable!("Incorrect statement signature!");
         };
 
-        let evaluated = self.evaluate_expression(value)?;
+        let rhs = self.evaluate_expression(value)?;
+
+        let evaluated = match op {
+            AssignOp::Eq => rhs,
+            AssignOp::Compound(bin_op) => {
+                let current = if target.indices.is_empty() {
+                    self.lookup(&target.name)
+                        .cloned()
+                        .ok_or(RuntimeError::UndefinedVariable(target.name.clone()))?
+                } else {
+                    self.evaluate_indexed_ident(&IndexedIdent {
+                        name: target.name.clone(),
+                        indices: target.indices.clone(),
+                    })?
+                };
+                self.apply_binary_op(bin_op, current, rhs)?
+            }
+        };
 
         if target.indices.is_empty() {
-            for scope in self.scopes.iter_mut().rev() {
-                if scope.contains_key(&target.name) {
-                    scope.insert(target.name.clone(), evaluated);
-                    return Ok(ControlFlow::None);
-                }
-            }
-            Err(RuntimeError::UndefinedVariable(target.name.clone()))
+            self.assign(&target.name, evaluated)
         } else {
             self.assign_indexed(&target.name, &target.indices, evaluated)
+        }
+    }
+
+    fn apply_binary_op(&self, op: &BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+        match op {
+            BinaryOp::Add => numeric_op!(lhs, rhs, +, "+="),
+            BinaryOp::Sub => numeric_op!(lhs, rhs, -, "-="),
+            BinaryOp::Mul => numeric_op!(lhs, rhs, *, "*="),
+            BinaryOp::Div => numeric_op!(lhs, rhs, /, "/="),
+            BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%="),
+            BinaryOp::And => bitwise_op!(lhs, rhs, &, "&="),
+            BinaryOp::Or  => bitwise_op!(lhs, rhs, |, "|="),
+            BinaryOp::Xor => bitwise_op!(lhs, rhs, ^, "^="),
+            BinaryOp::Shl => bitwise_op!(lhs, rhs, <<, "<<="),
+            BinaryOp::Shr => bitwise_op!(lhs, rhs, >>, ">>="),
+            BinaryOp::Pow => match (lhs, rhs) {
+                (Value::Int(a), Value::Int(b))     => Ok(Value::Float((a as f64).powf(b as f64))),
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
+                (Value::Int(a), Value::Float(b))   => Ok(Value::Float((a as f64).powf(b))),
+                (Value::Float(a), Value::Int(b))   => Ok(Value::Float(a.powf(b as f64))),
+                _ => Err(RuntimeError::UnsupportedOperation("**=".to_string()))
+            },
+            _ => Err(RuntimeError::UnsupportedOperation(format!("{:?}", op)))
         }
     }
 
@@ -576,5 +647,48 @@ impl Interpreter {
             }
         }
         Ok(ControlFlow::None)
+    }
+
+    fn call_function(&mut self, name: &str, args: &Vec<Expr>) -> Result<Value, RuntimeError> {
+        let func = self.functions.get(name)
+            .cloned()
+            .ok_or(RuntimeError::UndefinedFunction(name.to_string()))?;
+
+        let mut evaluated_args = vec![];
+        for x in args {
+            evaluated_args.push(self.evaluate_expression(x)?);
+        }
+
+        match func {
+            Function::BuiltIn(f) => f(evaluated_args),
+            Function::UserDefined { params, return_type, body } => {
+                if args.len() != params.len() {
+                    return Err(RuntimeError::InvalidArgCount(params.len(), args.len()));
+                }
+
+                self.push_scope();
+
+                for (param, value) in params.iter().zip(evaluated_args.into_iter()) {
+                    self.define(param.name.clone(), value)?;
+                }
+
+                let flow = self.interpret_statements(&body)?;
+
+                self.pop_scope();
+
+                match flow {
+                    ControlFlow::Return(value) => Ok(value),
+                    ControlFlow::None => Ok(Value::Void),
+                    ControlFlow::Break | ControlFlow::Continue => {
+                        Err(RuntimeError::InvalidControlFlow)
+                    }
+                }
+            },
+            Function::Gate { .. } => {
+                Err(RuntimeError::InvalidCall(
+                    format!("'{}' is a gate and cannot be called as a classical function", name)
+                ))
+            }
+        }
     }
 }

@@ -119,7 +119,8 @@ pub enum CompoundSymbol {
     Equals,
     NotEquals,
     And,
-    Or
+    Or,
+    Arrow
 }
 
 static LINE_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^//[^\r\n]*").unwrap());
@@ -140,6 +141,7 @@ impl TokenTrait for CompoundSymbol {
             ("!=", CompoundSymbol::NotEquals),
             ("&&", CompoundSymbol::And),
             ("||", CompoundSymbol::Or),
+            ("->", CompoundSymbol::Arrow),
         ];
 
         TOKENS.iter().find_map(|(pat, variant)| {
@@ -159,7 +161,7 @@ impl CompoundSymbol {
             CompoundSymbol::Equals => Some((35, 36)),
             CompoundSymbol::NotEquals => Some((35, 36)),
             CompoundSymbol::And => Some((15, 16)),
-            CompoundSymbol::Or => Some((10, 11)),
+            CompoundSymbol::Or => Some((10, 11)),   
             _ => None
         }
     }
@@ -176,6 +178,61 @@ impl CompoundSymbol {
             CompoundSymbol::And => Some(BinaryOp::LogicAnd),
             CompoundSymbol::Or => Some(BinaryOp::LogicOr),
             _ => None
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompoundAssignment {
+    PlusEquals,
+    MinusEquals,
+    StarEquals,
+    SlashEquals,
+    PercentEquals,
+    DoubleAsteriskEquals,
+    AmpersandEquals,
+    PipeEquals,
+    CaretEquals,
+    BitShiftLeftEquals,
+    BitShiftRightEquals,
+}
+
+impl TokenTrait for CompoundAssignment {
+    fn try_parse(input: &str) -> Option<(Self, usize)> {
+        const TOKENS: &[(&str, CompoundAssignment)] = &[
+            ("**=", CompoundAssignment::DoubleAsteriskEquals),
+            ("<<=", CompoundAssignment::BitShiftLeftEquals),
+            (">>=", CompoundAssignment::BitShiftRightEquals),
+            ("+=",  CompoundAssignment::PlusEquals),
+            ("-=",  CompoundAssignment::MinusEquals),
+            ("*=",  CompoundAssignment::StarEquals),
+            ("/=",  CompoundAssignment::SlashEquals),
+            ("%=",  CompoundAssignment::PercentEquals),
+            ("&=",  CompoundAssignment::AmpersandEquals),
+            ("|=",  CompoundAssignment::PipeEquals),
+            ("^=",  CompoundAssignment::CaretEquals),
+        ];
+
+        TOKENS.iter().find_map(|(pat, variant)| {
+            input.starts_with(pat).then(|| (variant.clone(), pat.len()))
+        })
+    }
+}
+
+impl CompoundAssignment {
+    pub fn get_binary_op(&self) -> BinaryOp {
+        match self {
+            CompoundAssignment::PlusEquals  => BinaryOp::Add,
+            CompoundAssignment::MinusEquals => BinaryOp::Sub,
+            CompoundAssignment::StarEquals  => BinaryOp::Mul,
+            CompoundAssignment::SlashEquals => BinaryOp::Div,
+            CompoundAssignment::PercentEquals => BinaryOp::Mod,
+            CompoundAssignment::DoubleAsteriskEquals => BinaryOp::Pow,
+            CompoundAssignment::AmpersandEquals => BinaryOp::And,
+            CompoundAssignment::PipeEquals  => BinaryOp::Or,
+            CompoundAssignment::CaretEquals => BinaryOp::Xor,
+            CompoundAssignment::BitShiftLeftEquals  => BinaryOp::Shl,
+            CompoundAssignment::BitShiftRightEquals => BinaryOp::Shr,
         }
     }
 }

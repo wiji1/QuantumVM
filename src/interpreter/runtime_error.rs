@@ -8,4 +8,8 @@ pub enum RuntimeError {
     UnsupportedType,
     ConstAssignment(String),
     IndexOutOfBounds(usize, usize),
+    InvalidArgCount(usize, usize),
+    UndefinedFunction(String),
+    InvalidCall(String),
+    InvalidControlFlow,
 }

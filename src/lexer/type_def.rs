@@ -2,7 +2,6 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::lexer::{match_keyword, TokenTrait};
 use crate::parser::expression::Expr;
-use crate::parser::parse_error::ParseError;
 use crate::parser::supporting_types::ClassicalType;
 
 #[derive(Debug, Clone)]

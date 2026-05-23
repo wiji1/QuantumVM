@@ -8,11 +8,11 @@ use crate::lexer::keyword::Keyword;
 use crate::lexer::literal::Literal;
 use crate::lexer::symbol::{CompoundSymbol, Symbol};
 use crate::lexer::type_def::TypeDefinition;
-use crate::lexer::{Token, TokenType};
+use crate::lexer::{Span, Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, ForIter, GateOperand, IndexedIdent, UnaryOp};
+use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, Param, ParamType, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -312,6 +312,7 @@ impl Parser {
             TokenType::TypeDef(TypeDefinition::Qubit) => self.parse_quantum_decl(),
             TokenType::TypeDef(TypeDefinition::Array) => self.parse_array_decl(),
             TokenType::TypeDef(_) => self.parse_classic_decl(),
+            TokenType::CompoundAssignment(_) => self.parse_assign(),
             TokenType::Keyword(Keyword::Const) => self.parse_const_decl(),
             TokenType::Keyword(Keyword::Gate) => self.parse_gate_def(),
             TokenType::Keyword(Keyword::If) => self.parse_if(),
@@ -322,11 +323,14 @@ impl Parser {
             TokenType::Keyword(Keyword::Continue) => self.parse_continue(),
             TokenType::Keyword(Keyword::Break) => self.parse_break(),
             TokenType::Keyword(Keyword::Return) => self.parse_return(),
+            TokenType::Keyword(Keyword::Def) => self.parse_def(),
             TokenType::Identifier(_) => {
                 if self.cursor + 1 >= self.tokens.len() { return self.parse_assign() }
                 match &self.tokens[self.cursor + 1].kind {
                     TokenType::Symbol(Symbol::Equals) => self.parse_assign(),
                     TokenType::Symbol(Symbol::LBracket) => self.parse_assign(),
+                    TokenType::CompoundAssignment(_) => self.parse_assign(),
+                    TokenType::Symbol(Symbol::LParen) => self.parse_expression_statement(),
                     _ => self.parse_gate_call()
                 }
             },
@@ -571,7 +575,19 @@ impl Parser {
             }
         }
 
-        expect_token!(self, TokenType::Symbol(Symbol::Equals));
+        let op = match &self.peek().kind {
+            TokenType::Symbol(Symbol::Equals) => { self.advance(); AssignOp::Eq }
+            TokenType::CompoundAssignment(ca) => {
+                let bin_op = ca.get_binary_op();
+                self.advance();
+                AssignOp::Compound(bin_op)
+            }
+            kind => return Err(ParseError::UnexpectedToken {
+                expected: TokenType::Symbol(Symbol::Equals),
+                found: kind.clone(),
+                span: self.peek().span.clone(),
+            })
+        };
 
         let value = if self.at(TokenType::Keyword(Keyword::Measure)) {
             self.advance();
@@ -582,12 +598,11 @@ impl Parser {
             self.parse_expr(0)?
         };
 
-
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::Assign {
             target: IndexedIdent { name, indices },
-            op: AssignOp::Eq,
+            op,
             value
         })
     }
@@ -773,5 +788,127 @@ impl Parser {
         };
 
         Ok(stmt)
+    }
+
+    fn parse_expression_statement(&mut self) -> Result<Stmt, ParseError> {
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+        expect_token!(self, TokenType::Symbol(Symbol::LParen));
+        let args = self.parse_expression_list(TokenType::Symbol(Symbol::RParen))?;
+        expect_token!(self, TokenType::Symbol(Symbol::RParen));
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        let call = Expr::Call {
+            name,
+            args,
+        };
+
+        Ok(Stmt::ExpressionStatement(call))
+    }
+
+    fn parse_def(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Def));
+
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+        expect_token!(self, TokenType::Symbol(Symbol::LParen));
+
+        let mut params = vec![];
+        while !self.at(TokenType::Symbol(Symbol::RParen)) && !self.is_at_end() {
+            params.push(self.parse_param()?);
+            if self.at(TokenType::Symbol(Symbol::Comma)) { self.advance(); }
+        }
+
+        expect_token!(self, TokenType::Symbol(Symbol::RParen));
+
+        let return_type = if self.at(TokenType::CompoundSymbol(CompoundSymbol::Arrow)) {
+            self.advance();
+            let ty = extract_token!(self,TokenType::TypeDef(t) => t,TokenType::TypeDef(TypeDefinition::Int));
+            let size = self.extract_index_operand()?;
+            Some((ty, size))
+        } else {
+            None
+        };
+
+        let body = self.parse_block()?;
+
+        Ok(Stmt::Def { name, params, return_type, body })
+    }
+
+    fn parse_param(&mut self) -> Result<Param, ParseError> {
+        match self.peek().kind.clone() {
+            TokenType::TypeDef(TypeDefinition::Qubit) => {
+                self.advance();
+                let size = self.extract_index_operand()?;
+                let name = extract_token!(
+                    self,
+                    TokenType::Identifier(Identifier::Identifier(s)) => s,
+                    TokenType::Identifier(Identifier::Identifier(String::new()))
+                );
+                Ok(Param { ty: ParamType::Qubit(size), name })
+            }
+
+            TokenType::TypeDef(ty) => {
+                self.advance();
+                let size = self.extract_index_operand()?;
+                let name = extract_token!(
+                    self,
+                    TokenType::Identifier(Identifier::Identifier(s)) => s,
+                    TokenType::Identifier(Identifier::Identifier(String::new()))
+                );
+                Ok(Param { ty: ParamType::Scalar(ty, size), name })
+            }
+
+            TokenType::Keyword(Keyword::ReadOnly) | TokenType::Keyword(Keyword::Mutable) => {
+                let mutable = matches!(self.peek().kind, TokenType::Keyword(Keyword::Mutable));
+                self.advance();
+                expect_token!(self, TokenType::TypeDef(TypeDefinition::Array));
+                expect_token!(self, TokenType::Symbol(Symbol::LBracket));
+                let element_ty = extract_token!(
+                    self,
+                    TokenType::TypeDef(t) => t,
+                    TokenType::TypeDef(TypeDefinition::Int)
+                );
+                let element_size = self.extract_index_operand()?;
+                expect_token!(self, TokenType::Symbol(Symbol::Comma));
+
+                let dimensions = if self.at(TokenType::Keyword(Keyword::Dim)) {
+                    self.advance();
+                    expect_token!(self, TokenType::Symbol(Symbol::Equals));
+                    let expr = self.parse_expr(0)?;
+                    ArrayDimensions::Dim(expr)
+                } else {
+                    let exprs = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
+                    ArrayDimensions::Explicit(exprs)
+                };
+
+                expect_token!(self, TokenType::Symbol(Symbol::RBracket));
+
+                let name = extract_token!(
+                    self,
+                    TokenType::Identifier(Identifier::Identifier(s)) => s,
+                    TokenType::Identifier(Identifier::Identifier(String::new()))
+                );
+
+                Ok(Param {
+                    ty: ParamType::ArrayRef { mutable, element_ty, element_size, dimensions },
+                    name,
+                })
+            }
+
+            _ => Err(ParseError::UnexpectedToken {
+                expected: TokenType::TypeDef(TypeDefinition::Int),
+                found: self.peek().kind.clone(),
+                span: self.peek().span.clone(),
+            })
+        }
     }
 }
