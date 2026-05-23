@@ -250,6 +250,26 @@ impl Parser {
                 expect_token!(self, TokenType::Symbol(Symbol::RBrace));
                 Expr::Array(Box::from(values))
             }
+            TokenType::TypeDef(type_def) => {
+                self.advance();
+                let size = self.extract_index_operand()?;
+
+                expect_token!(self, TokenType::Symbol(Symbol::LParen));
+                let expr = self.parse_expr(0)?;
+                expect_token!(self, TokenType::Symbol(Symbol::RParen));
+
+                let classical_type = type_def.get_classical_type(size);
+
+                match classical_type {
+                    Some(classical_type) => {
+                        Expr::Cast { ty: Box::new(classical_type), expr: Box::new(expr) }
+                    }
+                    None => return Err(ParseError::TypeError {
+                        message: "type cannot be cast to".to_string(),
+                        span: token.span
+                    })
+                }
+            }
             _ => return Err(ParseError::UnexpectedToken {
                 expected: TokenType::Literal(Literal::Integer(0)),
                 found: token.kind.clone(),
@@ -646,7 +666,7 @@ impl Parser {
             TokenType::TypeDef(TypeDefinition::Int)
         );
 
-        let classical_type = match type_def.get_classical_type() {
+        let classical_type = match type_def.get_classical_type(None) {
             Some(classical_type) => classical_type,
             None => return Err(ParseError::InvalidStatement {
                 found: self.peek().kind.clone(),

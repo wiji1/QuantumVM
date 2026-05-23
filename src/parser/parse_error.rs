@@ -22,6 +22,10 @@ pub enum ParseError {
     InvalidStatement {
         found: TokenType,
         span: Span,
+    },
+    TypeError {
+        message: String,
+        span: Span,
     }
 }
 
@@ -57,6 +61,13 @@ impl fmt::Display for ParseError {
                     f,
                     "invalid statement — found '{:?}' at line {}, col {}",
                     found, span.line, span.col
+                )
+            },
+            ParseError::TypeError { message, span } => {
+                write!(
+                    f,
+                    "type error: {:?} at line {}, col {}",
+                    message, span.line, span.col
                 )
             }
         }

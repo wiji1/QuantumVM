@@ -7,7 +7,7 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, BinaryOp, ForIter, IndexedIdent, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, UnaryOp};
 use crate::parser::Program;
 use std::collections::{HashMap, HashSet};
 use crate::interpreter::control_flow::ControlFlow;
@@ -288,7 +288,10 @@ impl Interpreter {
             Expr::Binary { .. } => { self.evaluate_binary(expr) }
             Expr::Index { .. } => { todo!() }
             Expr::Call { name, args } => { self.call_function(name, args) }
-            Expr::Cast { .. } => { todo!() }
+            Expr::Cast { ty, expr } => {
+                let value = self.evaluate_expression(expr)?;
+                self.apply_cast(ty, value)
+            }
             Expr::Range { .. } => { todo!() }
         }
     }
@@ -689,6 +692,45 @@ impl Interpreter {
                     format!("'{}' is a gate and cannot be called as a classical function", name)
                 ))
             }
+        }
+    }
+
+    fn apply_cast(&self, ty: &ClassicalType, value: Value) -> Result<Value, RuntimeError> {
+        match &ty {
+            ClassicalType::Int(_) => match value {
+                Value::Int(i)   => Ok(Value::Int(i)),
+                Value::Float(f) => Ok(Value::Int(f as i64)),
+                Value::Bool(b)  => Ok(Value::Int(b as i64)),
+                Value::Bits { value, .. } => Ok(Value::Int(value as i64)),
+                _ => Err(RuntimeError::TypeMismatch("cannot cast to int".to_string())),
+            },
+            ClassicalType::Float(_) => match value {
+                Value::Float(f) => Ok(Value::Float(f)),
+                Value::Int(i)   => Ok(Value::Float(i as f64)),
+                Value::Bool(b)  => Ok(Value::Float(b as i64 as f64)),
+                _ => Err(RuntimeError::TypeMismatch("cannot cast to float".to_string())),
+            },
+            ClassicalType::Bool(_) => match value {
+                Value::Bool(b)  => Ok(Value::Bool(b)),
+                Value::Int(i)   => Ok(Value::Bool(i != 0)),
+                Value::Float(f) => Ok(Value::Bool(f != 0.0)),
+                Value::Bits { value, .. } => Ok(Value::Bool(value != 0)),
+                _ => Err(RuntimeError::TypeMismatch("cannot cast to bool".to_string())),
+            },
+            ClassicalType::Bit(size_expr) => {
+                let width = match size_expr {
+                    Some(Expr::Int(n)) => n.clone() as usize,
+                    None => 1,
+                    _ => return Err(RuntimeError::InvalidSize),
+                };
+                match value {
+                    Value::Int(i)  => Ok(Value::Bits { value: i as u64, width }),
+                    Value::Bits { value, .. } => Ok(Value::Bits { value, width }),
+                    Value::Bool(b) => Ok(Value::Bits { value: b as u64, width }),
+                    _ => Err(RuntimeError::TypeMismatch("cannot cast to bit".to_string())),
+                }
+            },
+            _ => Err(RuntimeError::UnsupportedType),
         }
     }
 }

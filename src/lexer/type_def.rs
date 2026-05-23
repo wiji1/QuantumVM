@@ -60,21 +60,21 @@ impl TokenTrait for TypeDefinition {
 }
 
 impl TypeDefinition {
-    pub fn get_classical_type(&self) -> Option<ClassicalType> {
+    pub fn get_classical_type(&self, size: Option<Expr>) -> Option<ClassicalType> {
         match self {
-            TypeDefinition::Bool => Some(ClassicalType::Bool(None)),
-            TypeDefinition::Bit => Some(ClassicalType::Bit(None)),
-            TypeDefinition::Int => Some(ClassicalType::Int(None)),
-            TypeDefinition::UInt => Some(ClassicalType::UInt(None)),
-            TypeDefinition::Float => Some(ClassicalType::Float(None)),
-            TypeDefinition::Angle => Some(ClassicalType::Angle(None)),
+            TypeDefinition::Bool => Some(ClassicalType::Bool(size)),
+            TypeDefinition::Bit => Some(ClassicalType::Bit(size)),
+            TypeDefinition::Int => Some(ClassicalType::Int(size)),
+            TypeDefinition::UInt => Some(ClassicalType::UInt(size)),
+            TypeDefinition::Float => Some(ClassicalType::Float(size)),
+            TypeDefinition::Angle => Some(ClassicalType::Angle(size)),
             TypeDefinition::Complex => Some(ClassicalType::Complex(None)),
-            TypeDefinition::Duration => Some(ClassicalType::Duration(None)),
+            TypeDefinition::Duration => Some(ClassicalType::Duration(size)),
             _ => None,
         }
     }
 
     pub fn get_default_value(&self, size: Option<Expr>) -> Result<Value, RuntimeError> {
-        self.get_classical_type().unwrap().get_default_value(size)
+        self.get_classical_type(None).unwrap().get_default_value(size)
     }
 }
