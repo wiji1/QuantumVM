@@ -2,6 +2,7 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::lexer::type_def::TypeDefinition;
 use crate::parser::expression::Expr;
+use crate::parser::statement::Stmt;
 
 #[derive(Debug, Clone)]
 pub enum UnaryOp  { Neg, BitNot, LogicNot }
@@ -65,6 +66,12 @@ pub enum ArrayDimensions {
 pub struct Param {
     pub ty: ParamType,
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchCase {
+    pub values: Vec<Expr>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]

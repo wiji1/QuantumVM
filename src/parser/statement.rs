@@ -1,5 +1,5 @@
 use crate::parser::expression::Expr;
-use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, Param};
+use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, Param, SwitchCase};
 use crate::lexer::type_def::TypeDefinition;
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub enum Stmt {
     Barrier { qubits: Vec<GateOperand> },
 
     If { cond: Expr, then: Box<Vec<Stmt>>, else_: Option<Vec<Stmt>> },
+    Switch { expr: Expr, cases: Vec<SwitchCase> },
     For { var: String, ty: ClassicalType, iter: ForIter, body: Box<Vec<Stmt>> },
     While { cond: Expr, body: Box<Vec<Stmt>> },
     Continue,

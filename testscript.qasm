@@ -1,8 +1,7 @@
 OPENQASM 3.0;
-int x = 5;
-{
-    int y = x + 1;
-    x = x + 10;
+int x = 99;
+int result = 0;
+switch (x) {
+    case 1 { result = 1; }
+    default { result = 42; }
 }
-y += 1;
-int z = x;

@@ -12,7 +12,7 @@ use crate::lexer::{Span, Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, Param, ParamType, UnaryOp};
+use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, Param, ParamType, SwitchCase, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -344,6 +344,7 @@ impl Parser {
             TokenType::Keyword(Keyword::Break) => self.parse_break(),
             TokenType::Keyword(Keyword::Return) => self.parse_return(),
             TokenType::Keyword(Keyword::Def) => self.parse_def(),
+            TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenType::Symbol(Symbol::LBrace) => {
                 let stmts = self.parse_block()?;
                 Ok(Stmt::Block(stmts))
@@ -934,5 +935,45 @@ impl Parser {
                 span: self.peek().span.clone(),
             })
         }
+    }
+
+    fn parse_switch(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        expect_token!(self, TokenType::Symbol(Symbol::LParen));
+        let expr = self.parse_expr(0)?;
+        expect_token!(self, TokenType::Symbol(Symbol::RParen));
+        expect_token!(self, TokenType::Symbol(Symbol::LBrace));
+
+        let mut cases: Vec<SwitchCase> = vec![];
+        while !self.at(TokenType::Symbol(Symbol::RBrace)) && !self.is_at_end() {
+            self.skip_trivia();
+            if self.at(TokenType::Symbol(Symbol::RBrace)) { break; }
+            cases.push(self.parse_switch_case()?)
+        }
+
+        expect_token!(self, TokenType::Symbol(Symbol::RBrace));
+        Ok(Stmt::Switch { expr, cases })
+    }
+
+    fn parse_switch_case(&mut self) -> Result<SwitchCase, ParseError> {
+        let values: Vec<Expr> = match self.peek().kind {
+            TokenType::Keyword(Keyword::Case) => {
+                self.advance();
+                self.parse_expression_list(TokenType::Symbol(Symbol::LBrace))?
+            },
+            TokenType::Keyword(Keyword::Default) => {
+                self.advance();
+                vec![]
+            }
+            _ => {
+                return Err(ParseError::InvalidStatement {
+                    found: self.peek().kind.clone(),
+                    span: self.peek().span.clone(),
+                });
+            }
+        };
+
+        let body = self.parse_block()?;
+        Ok(SwitchCase { values, body })
     }
 }

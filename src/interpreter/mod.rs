@@ -7,7 +7,7 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, SwitchCase, UnaryOp};
 use crate::parser::Program;
 use std::collections::{HashMap, HashSet};
 use crate::interpreter::control_flow::ControlFlow;
@@ -157,6 +157,7 @@ impl Interpreter {
             Stmt::Reset { .. } => todo!(),
             Stmt::Barrier { .. } => todo!(),
             Stmt::If { .. } => self.interpret_if(stmt),
+            Stmt::Switch { .. } => self.interpret_switch(stmt),
             Stmt::For { .. } => self.interpret_for(stmt),
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::Continue => Ok(ControlFlow::Continue),
@@ -527,6 +528,47 @@ impl Interpreter {
         }
 
         Ok(ControlFlow::None)
+    }
+
+    fn interpret_switch(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::Switch { expr, cases } = stmt else {
+            unreachable!("Incorrect statement signature!");
+        };
+
+        let value = self.evaluate_expression(expr)?;
+        let mut default_case: Option<SwitchCase> = None;
+
+        for case in cases {
+            if case.values.is_empty() {
+                default_case = Some(case.clone());
+                continue;
+            }
+
+            for expr in case.values.clone() {
+                let expr_value = self.evaluate_expression(&expr)?;
+
+                if value == expr_value {
+                    self.push_scope();
+                    let flow =self.interpret_statements(&case.body)?;
+                    self.pop_scope();
+
+                    return Ok(flow);
+                }
+            }
+        }
+
+        match default_case {
+            Some(case) => {
+                self.push_scope();
+                let flow = self.interpret_statements(&case.body)?;
+                self.pop_scope();
+
+                Ok(flow)
+            }
+            None => {
+                Ok(ControlFlow::None)
+            }
+        }
     }
 
     fn interpret_while(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {

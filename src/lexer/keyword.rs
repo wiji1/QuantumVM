@@ -19,7 +19,10 @@ pub enum Keyword {
     Def,
     ReadOnly,
     Mutable,
-    Dim
+    Dim,
+    Switch,
+    Case,
+    Default
 }
 
 impl TokenTrait for Keyword {
@@ -78,6 +81,15 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "dim") {
             return Some((Self::Dim, len));
+        }
+        if let Some(len) = match_keyword(input, "switch") {
+            return Some((Self::Switch, len));
+        }
+        if let Some(len) = match_keyword(input, "case") {
+            return Some((Self::Case, len));
+        }
+        if let Some(len) = match_keyword(input, "default") {
+            return Some((Self::Default, len));
         }
         None
     }
