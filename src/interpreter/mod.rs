@@ -79,14 +79,14 @@ impl Interpreter {
         let defaults_result = self.define_default_operations();
         match defaults_result {
             Ok(_) => {},
-            Err(e) => println!("Runtime error: {:?}", e)
+            Err(e) => panic!("Runtime error: {:?}", e)
         };
 
         for stmt in self.program.statements.clone() {
             match self.interpret_statement(&stmt) {
                 Ok(ControlFlow::Return(_)) => break,
                 Ok(_) => {}
-                Err(e) => { println!("Runtime error: {:?}", e); break; }
+                Err(e) => { panic!("Runtime error: {:?}", e); break; }
             }
         }
 
@@ -190,7 +190,13 @@ impl Interpreter {
                 });
                 Ok(ControlFlow::None)
             }
-            Stmt::Block(_) => todo!(),
+            Stmt::Block(stmts) => {
+                self.push_scope();
+                let flow = self.interpret_statements(stmts)?;
+                self.pop_scope();
+
+                Ok(flow)
+            },
         }
     }
 

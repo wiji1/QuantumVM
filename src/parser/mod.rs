@@ -344,6 +344,10 @@ impl Parser {
             TokenType::Keyword(Keyword::Break) => self.parse_break(),
             TokenType::Keyword(Keyword::Return) => self.parse_return(),
             TokenType::Keyword(Keyword::Def) => self.parse_def(),
+            TokenType::Symbol(Symbol::LBrace) => {
+                let stmts = self.parse_block()?;
+                Ok(Stmt::Block(stmts))
+            },
             TokenType::Identifier(_) => {
                 if self.cursor + 1 >= self.tokens.len() { return self.parse_assign() }
                 match &self.tokens[self.cursor + 1].kind {
