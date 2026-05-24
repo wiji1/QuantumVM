@@ -22,7 +22,9 @@ pub enum Keyword {
     Dim,
     Switch,
     Case,
-    Default
+    Default,
+    Input,
+    Output,
 }
 
 impl TokenTrait for Keyword {
@@ -91,6 +93,13 @@ impl TokenTrait for Keyword {
         if let Some(len) = match_keyword(input, "default") {
             return Some((Self::Default, len));
         }
+        if let Some(len) = match_keyword(input, "input") {
+            return Some((Self::Input, len));
+        }
+        if let Some(len) = match_keyword(input, "output") {
+            return Some((Self::Output, len));
+        }
+
         None
     }
 }

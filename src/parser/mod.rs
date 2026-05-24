@@ -12,7 +12,7 @@ use crate::lexer::{Span, Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, Param, ParamType, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, IoDirection, Param, ParamType, SwitchCase, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -345,6 +345,7 @@ impl Parser {
             TokenType::Keyword(Keyword::Return) => self.parse_return(),
             TokenType::Keyword(Keyword::Def) => self.parse_def(),
             TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
+            TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Symbol(Symbol::LBrace) => {
                 let stmts = self.parse_block()?;
                 Ok(Stmt::Block(stmts))
@@ -975,5 +976,32 @@ impl Parser {
 
         let body = self.parse_block()?;
         Ok(SwitchCase { values, body })
+    }
+
+    fn parse_io_decl(&mut self) -> Result<Stmt, ParseError> {
+        let direction = match self.peek().kind {
+            TokenType::Keyword(Keyword::Input) => IoDirection::Input,
+            TokenType::Keyword(Keyword::Output) => IoDirection::Output,
+            _ => unreachable!()
+        };
+
+        self.advance();
+
+        let ty = extract_token!(
+            self,
+            TokenType::TypeDef(t) => t,
+            TokenType::TypeDef(TypeDefinition::Bit)
+        );
+
+        let size = self.extract_index_operand()?;
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+        
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        Ok(Stmt::IoDecl { direction, ty, size, name })
     }
 }

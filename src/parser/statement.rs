@@ -1,5 +1,5 @@
 use crate::parser::expression::Expr;
-use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, Param, SwitchCase};
+use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateOperand, IndexedIdent, IoDirection, Param, SwitchCase};
 use crate::lexer::type_def::TypeDefinition;
 
 #[derive(Debug, Clone)]
@@ -8,6 +8,7 @@ pub enum Stmt {
     ClassicalDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Option<Expr> },
     ArrayDecl { ty: TypeDefinition, type_size: Option<Expr>, name: String, size: Vec<Expr>, init: Option<Expr> },
     ConstDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Expr },
+    IoDecl { direction: IoDirection, ty: TypeDefinition, size: Option<Expr>, name: String },
 
     GateCall { name: String, params: Vec<Expr>, qubits: Vec<GateOperand> },
     ExpressionStatement(Expr),

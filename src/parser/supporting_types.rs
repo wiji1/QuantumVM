@@ -75,6 +75,12 @@ pub struct SwitchCase {
 }
 
 #[derive(Debug, Clone)]
+pub enum IoDirection {
+    Input,
+    Output,
+}
+
+#[derive(Debug, Clone)]
 pub enum ClassicalType {
     Bit(Option<Expr>),
     Int(Option<Expr>),

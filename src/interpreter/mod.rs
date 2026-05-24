@@ -7,7 +7,7 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
 use crate::parser::Program;
 use std::collections::{HashMap, HashSet};
 use crate::interpreter::control_flow::ControlFlow;
@@ -66,11 +66,32 @@ pub struct Interpreter {
     scopes: Vec<HashMap<String, Value>>,
     constants: HashSet<String>,
     functions: HashMap<String, Function>,
+    inputs: HashMap<String, Value>,
+    outputs: HashMap<String, Value>,
 }
 
 impl Interpreter {
     pub(crate) fn new(program: Program) -> Interpreter {
-        Interpreter { program, scopes: vec![], constants: HashSet::new(), functions: get_default_functions() }
+        Interpreter {
+            program,
+            scopes: vec![],
+            constants: HashSet::new(),
+            functions: get_default_functions(),
+            inputs: HashMap::new(),
+            outputs: HashMap::new()
+        }
+    }
+
+    pub fn set_input(&mut self, name: &str, value: Value) {
+        self.inputs.insert(name.to_string(), value);
+    }
+
+    pub fn get_output(&self, name: &str) -> Option<Value> {
+        self.outputs.get(name).cloned()
+    }
+
+    pub fn get_outputs(&self) -> &HashMap<String, Value> {
+        &self.outputs
     }
 
     pub fn start(&mut self) {
@@ -86,11 +107,19 @@ impl Interpreter {
             match self.interpret_statement(&stmt) {
                 Ok(ControlFlow::Return(_)) => break,
                 Ok(_) => {}
-                Err(e) => { panic!("Runtime error: {:?}", e); break; }
+                Err(e) => { panic!("Runtime error: {:?}", e); }
             }
         }
 
-        println!("Full scopes: {:?}", self.scopes);
+        for output in self.outputs.clone().keys() {
+            let output_value = self.lookup(output);
+
+            match output_value {
+                Some(value) => self.outputs.insert(output.to_string(), value.clone()),
+                None => panic!("Output '{:?}' not found!", output)
+            };
+        }
+
         self.pop_scope();
     }
 
@@ -160,6 +189,7 @@ impl Interpreter {
             Stmt::Switch { .. } => self.interpret_switch(stmt),
             Stmt::For { .. } => self.interpret_for(stmt),
             Stmt::While { .. } => self.interpret_while(stmt),
+            Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
             Stmt::ExpressionStatement(expr) => {
@@ -779,6 +809,31 @@ impl Interpreter {
                 }
             },
             _ => Err(RuntimeError::UnsupportedType),
+        }
+    }
+
+    fn interpret_io_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::IoDecl { direction, ty, size, name } = stmt else {
+            unreachable!("Incorrect statement signature!");
+        };
+
+        match direction {
+            IoDirection::Input => {
+                let value = self.inputs.get(name);
+                match value {
+                    Some(value) => {
+                        self.define(name.to_string(), value.clone())?;
+                        Ok(ControlFlow::None)
+                    },
+                    None => Err(RuntimeError::UndefinedVariable(name.to_string())),
+                }
+            }
+            IoDirection::Output => {
+                self.define(name.to_string(), ty.get_default_value(size.clone())?)?;
+                self.outputs.insert(name.to_string(), ty.get_default_value(size.clone())?);
+
+                Ok(ControlFlow::None)
+            }
         }
     }
 }

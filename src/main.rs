@@ -4,6 +4,7 @@ mod interpreter;
 
 use std::{env, fs};
 use crate::interpreter::Interpreter;
+use crate::interpreter::value::Value;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -23,7 +24,12 @@ fn main() {
             let program = parser.start().expect("TODO: panic message");
             
             let mut interpreter = Interpreter::new(program);
+            //TODO: Set input values
             interpreter.start();
+
+            //TODO: display output values
+            println!("Outputs: {:?}", interpreter.get_outputs().values());
+
         }
         Err(error) => { panic!("{}", error); }
     }

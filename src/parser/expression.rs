@@ -30,6 +30,6 @@ pub enum Expr {
 
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(f, "{self:?}")
     }
 }
