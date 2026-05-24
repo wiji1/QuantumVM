@@ -30,4 +30,5 @@ pub enum Stmt {
     Assign { target: IndexedIdent, op: AssignOp, value: Expr },
 
     Block(Vec<Stmt>),
+    Include(String),
 }

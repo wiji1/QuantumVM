@@ -25,6 +25,7 @@ pub enum Keyword {
     Default,
     Input,
     Output,
+    Include
 }
 
 impl TokenTrait for Keyword {
@@ -98,6 +99,9 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "output") {
             return Some((Self::Output, len));
+        }
+        if let Some(len) = match_keyword(input, "include") {
+            return Some((Self::Include, len));
         }
 
         None

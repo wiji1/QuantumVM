@@ -2,17 +2,22 @@ mod lexer;
 mod parser;
 mod interpreter;
 
-use std::{env, fs};
 use crate::interpreter::Interpreter;
-use crate::interpreter::value::Value;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use std::{env, fs};
+use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     let file_path = &args[1];
     let file_content = fs::read_to_string(file_path);
+
+    let script_path = PathBuf::from(file_path);
+    let script_dir = script_path.parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
 
     match file_content {
         Ok(content) => {
@@ -23,7 +28,7 @@ fn main() {
             let mut parser = Parser::new(lexer_output);
             let program = parser.start().expect("TODO: panic message");
             
-            let mut interpreter = Interpreter::new(program);
+            let mut interpreter = Interpreter::new(program, script_dir);
             //TODO: Set input values
             interpreter.start();
 

@@ -8,10 +8,12 @@ use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
 use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
-use crate::parser::Program;
+use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use crate::interpreter::control_flow::ControlFlow;
 use crate::interpreter::function::{get_default_functions, Function};
+use crate::lexer::Lexer;
 use crate::lexer::type_def::TypeDefinition;
 
 macro_rules! numeric_op {
@@ -68,17 +70,19 @@ pub struct Interpreter {
     functions: HashMap<String, Function>,
     inputs: HashMap<String, Value>,
     outputs: HashMap<String, Value>,
+    script_dir: PathBuf,
 }
 
 impl Interpreter {
-    pub(crate) fn new(program: Program) -> Interpreter {
+    pub(crate) fn new(program: Program, path_buf: PathBuf) -> Interpreter {
         Interpreter {
             program,
             scopes: vec![],
             constants: HashSet::new(),
             functions: get_default_functions(),
             inputs: HashMap::new(),
-            outputs: HashMap::new()
+            outputs: HashMap::new(),
+            script_dir: path_buf,
         }
     }
 
@@ -190,6 +194,7 @@ impl Interpreter {
             Stmt::For { .. } => self.interpret_for(stmt),
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
+            Stmt::Include(s) => self.interpret_include(s),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
             Stmt::ExpressionStatement(expr) => {
@@ -835,5 +840,20 @@ impl Interpreter {
                 Ok(ControlFlow::None)
             }
         }
+    }
+
+    fn interpret_include(&mut self, path: &String) -> Result<ControlFlow, RuntimeError> {
+        let full_path = self.script_dir.join(path);
+        let source = std::fs::read_to_string(&full_path)
+            .map_err(|_| RuntimeError::FileNotFound(path.clone()))?;
+
+        let mut lexer = Lexer::new(source);
+        lexer.start();
+
+        let mut parser = Parser::new(lexer.tokens);
+        let program = parser.start()
+            .map_err(|e| RuntimeError::ParseError(e))?;
+
+        self.interpret_statements(&program.statements)
     }
 }

@@ -92,7 +92,11 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
 
-        println!("{}", version.as_ref().expect("Version missing!"));
+        //TODO: Remove debug
+        if let Some(v) = &version {
+            println!("Version: {}", v);
+        }
+
         for x in &statements {
             println!("{:?}", x)
         }
@@ -345,6 +349,7 @@ impl Parser {
             TokenType::Keyword(Keyword::Return) => self.parse_return(),
             TokenType::Keyword(Keyword::Def) => self.parse_def(),
             TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
+            TokenType::Keyword(Keyword::Include) => self.parse_include(),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Symbol(Symbol::LBrace) => {
                 let stmts = self.parse_block()?;
@@ -457,6 +462,8 @@ impl Parser {
             TokenType::Identifier(Identifier::Identifier(s)) => s,
             TokenType::Identifier(Identifier::Identifier(String::new()))
         );
+
+        expect_token!(self, TokenType::Symbol(Symbol::Equals));
 
         let init = self.parse_expr(0)?;
 
@@ -999,9 +1006,23 @@ impl Parser {
             TokenType::Identifier(Identifier::Identifier(s)) => s,
             TokenType::Identifier(Identifier::Identifier(String::new()))
         );
-        
+
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::IoDecl { direction, ty, size, name })
+    }
+
+    fn parse_include(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        let path = extract_token!(
+            self,
+            TokenType::Literal(Literal::String(s)) => s,
+            TokenType::Literal(Literal::String(String::new()))
+        );
+
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        Ok(Stmt::Include(path))
     }
 }

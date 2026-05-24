@@ -1,3 +1,5 @@
+use crate::parser::parse_error::ParseError;
+
 #[derive(Debug)]
 pub enum RuntimeError {
     UnsupportedOperation(String),
@@ -12,4 +14,6 @@ pub enum RuntimeError {
     UndefinedFunction(String),
     InvalidCall(String),
     InvalidControlFlow,
+    FileNotFound(String),
+    ParseError(ParseError)
 }
