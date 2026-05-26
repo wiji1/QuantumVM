@@ -361,7 +361,10 @@ impl Parser {
                     TokenType::Symbol(Symbol::Equals) => self.parse_assign(),
                     TokenType::Symbol(Symbol::LBracket) => self.parse_assign(),
                     TokenType::CompoundAssignment(_) => self.parse_assign(),
-                    TokenType::Symbol(Symbol::LParen) => self.parse_expression_statement(),
+                    TokenType::Symbol(Symbol::LParen) => {
+                        if self.has_qubit_operands_after_params() { self.parse_gate_call() }
+                        else {self.parse_expression_statement() }
+                    },
                     _ => self.parse_gate_call()
                 }
             },
@@ -581,6 +584,22 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::GateCall { name: identifier, params, qubits})
+    }
+
+    fn has_qubit_operands_after_params(&self) -> bool {
+        let close_paren = self.tokens[self.cursor + 1..]
+            .iter()
+            .position(|t| matches!(t.kind, TokenType::Symbol(Symbol::RParen)));
+
+        let Some(offset) = close_paren else {
+            return false;
+        };
+
+        let next = self.cursor + 2 + offset;
+        matches!(
+            self.tokens.get(next).map(|t| &t.kind),
+            Some(TokenType::Identifier(_) | TokenType::Symbol(Symbol::LBracket))
+        )
     }
 
     fn extract_index_operand(&mut self) -> Result<Option<Expr>, ParseError> {

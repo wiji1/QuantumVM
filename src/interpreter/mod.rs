@@ -1,3 +1,5 @@
+pub mod quantum;
+
 pub(crate) mod value;
 pub(crate) mod runtime_error;
 pub(crate) mod control_flow;
@@ -7,12 +9,13 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
 use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use crate::interpreter::control_flow::ControlFlow;
 use crate::interpreter::function::{get_default_functions, Function};
+use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::lexer::Lexer;
 use crate::lexer::type_def::TypeDefinition;
 
@@ -71,6 +74,9 @@ pub struct Interpreter {
     inputs: HashMap<String, Value>,
     outputs: HashMap<String, Value>,
     script_dir: PathBuf,
+    state_vector: Option<StateVector>,
+    qubit_map: HashMap<String, Vec<usize>>,
+    num_qubits: usize,
 }
 
 impl Interpreter {
@@ -83,6 +89,9 @@ impl Interpreter {
             inputs: HashMap::new(),
             outputs: HashMap::new(),
             script_dir: path_buf,
+            state_vector: None,
+            qubit_map: HashMap::new(),
+            num_qubits: 0,
         }
     }
 
@@ -96,6 +105,10 @@ impl Interpreter {
 
     pub fn get_outputs(&self) -> &HashMap<String, Value> {
         &self.outputs
+    }
+
+    pub fn get_state_vector(&self) -> Option<StateVector> {
+        self.state_vector.clone()
     }
 
     pub fn start(&mut self) {
@@ -181,11 +194,11 @@ impl Interpreter {
 
     fn interpret_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         match stmt {
-            Stmt::QuantumDecl { .. } => todo!(),
+            Stmt::QuantumDecl { .. } => self.interpret_quantum_decl(stmt),
             Stmt::ClassicalDecl { .. } => self.interpret_classical_declaration(stmt),
             Stmt::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
             Stmt::ConstDecl { .. } => self.interpret_const_declaration(stmt),
-            Stmt::GateCall { .. } => todo!(),
+            Stmt::GateCall { .. } => self.interpret_gate_call(stmt),
             Stmt::Measure { .. } => todo!(),
             Stmt::Reset { .. } => todo!(),
             Stmt::Barrier { .. } => todo!(),
@@ -770,7 +783,7 @@ impl Interpreter {
                     }
                 }
             },
-            Function::Gate { .. } => {
+            Function::Gate { .. } | Function::BuiltInGate { .. } => {
                 Err(RuntimeError::InvalidCall(
                     format!("'{}' is a gate and cannot be called as a classical function", name)
                 ))
@@ -855,5 +868,123 @@ impl Interpreter {
             .map_err(|e| RuntimeError::ParseError(e))?;
 
         self.interpret_statements(&program.statements)
+    }
+
+    fn allocate_qubits(&mut self, name: &str, count: usize) {
+        let start_index = self.num_qubits;
+        let indices: Vec<usize> = (start_index..start_index + count).collect();
+        self.qubit_map.insert(name.to_string(), indices);
+        self.num_qubits += count;
+
+        let new_size = 2usize.pow(self.num_qubits as u32);
+        match &mut self.state_vector {
+            None => {
+                self.state_vector = Some(StateVector::new(self.num_qubits));
+            }
+            Some(sv) => {
+                let old_amplitudes = sv.amplitudes.clone();
+                sv.amplitudes = vec![C64::new(0.0, 0.0); new_size];
+                for (i, amp) in old_amplitudes.iter().enumerate() {
+                    sv.amplitudes[i * (2usize.pow(count as u32))] = *amp;
+                }
+                sv.num_qubits = self.num_qubits;
+            }
+        }
+    }
+
+    fn interpret_quantum_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::QuantumDecl { name, size } = stmt else {
+            unreachable!();
+        };
+
+        let count = match size {
+            Some(expr) => {
+                let evaluated_size = self.evaluate_expression(expr)?;
+
+                match evaluated_size {
+                    Value::Int(size) => size as usize,
+                    _ => return Err(RuntimeError::InvalidSize)
+                }
+            },
+            None => 1,
+            _ => return Err(RuntimeError::InvalidSize),
+        };
+
+        self.allocate_qubits(name, count);
+        Ok(ControlFlow::None)
+    }
+
+    fn resolve_qubit(&self, operand: &GateOperand) -> Result<usize, RuntimeError> {
+        match operand {
+            GateOperand::Ident(ident) => {
+                let indices = self.qubit_map.get(&ident.name)
+                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
+
+                if ident.indices.is_empty() {
+                    if indices.len() == 1 { Ok(indices[0]) }
+                    else { Err(RuntimeError::InvalidQubitAccess(ident.name.clone())) }
+                } else {
+                    let index = match &ident.indices[0] {
+                        Expr::Int(i) => *i as usize,
+                        _ => {
+                            // evaluate the index expression
+                            todo!("dynamic qubit indices")
+                        }
+                    };
+                    indices.get(index)
+                        .copied()
+                        .ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))
+                }
+            }
+            GateOperand::HardwareQubit(i) => Ok(*i as usize),
+        }
+    }
+
+    fn interpret_gate_call(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::GateCall { name, params, qubits } = stmt else {
+            unreachable!();
+        };
+
+        let param_values: Vec<f64> = params.iter()
+            .map(|p| match self.evaluate_expression(p) {
+                Ok(Value::Float(f)) => Ok(f),
+                Ok(Value::Int(i)) => Ok(i as f64),
+                Ok(_) => Err(RuntimeError::TypeMismatch("gate param must be numeric".to_string())),
+                Err(e) => Err(e),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let qubit_indices: Vec<usize> = qubits.iter()
+            .map(|q| self.resolve_qubit(q))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let func = self.functions.get(name)
+            .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
+            .clone();
+
+        match func {
+            Function::BuiltInGate(gate) => {
+                let sv = self.state_vector.as_mut()
+                    .ok_or(RuntimeError::NoStateVector)?;
+                gate.apply(sv, &qubit_indices, &param_values)?;
+            }
+            Function::Gate { params: param_names, qubits: qubit_names, body } => {
+                self.push_scope();
+                for (pname, pval) in param_names.iter().zip(param_values.iter()) {
+                    self.define(pname.clone(), Value::Float(*pval))?;
+                }
+                for (qname, qindex) in qubit_names.iter().zip(qubit_indices.iter()) {
+                    self.qubit_map.insert(qname.clone(), vec![*qindex]);
+                }
+                self.interpret_statements(&body)?;
+                for qname in &qubit_names {
+                    self.qubit_map.remove(qname);
+                }
+                self.pop_scope();
+            }
+            _ => return Err(RuntimeError::UndefinedFunction(name.clone())),
+        }
+
+        Ok(ControlFlow::None)
     }
 }

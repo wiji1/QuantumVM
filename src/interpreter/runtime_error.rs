@@ -15,5 +15,7 @@ pub enum RuntimeError {
     InvalidCall(String),
     InvalidControlFlow,
     FileNotFound(String),
-    ParseError(ParseError)
+    ParseError(ParseError),
+    InvalidQubitAccess(String),
+    NoStateVector,
 }

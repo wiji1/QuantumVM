@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use crate::interpreter::quantum::gates::*;
+use crate::interpreter::quantum::statevector::StateVector;
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::lexer::type_def::TypeDefinition;
@@ -68,6 +70,7 @@ fn builtin_mod(args: Vec<Value>) -> Result<Value, RuntimeError> {
 #[derive(Clone)]
 pub enum Function {
     BuiltIn(fn(Vec<Value>) -> Result<Value, RuntimeError>),
+    BuiltInGate(BuiltInGate),
     UserDefined { params: Vec<Param>, return_type: Option<(TypeDefinition, Option<Expr>)>, body: Vec<Stmt> },
     Gate { params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
 }
@@ -88,5 +91,32 @@ pub fn get_default_functions() -> HashMap<String, Function> {
     functions.insert("pow".to_string(), Function::BuiltIn(builtin_pow));
     functions.insert("mod".to_string(), Function::BuiltIn(builtin_mod));
 
+    functions.insert("U".to_string(),  Function::BuiltInGate(BuiltInGate::U));
+    functions.insert("CX".to_string(), Function::BuiltInGate(BuiltInGate::Cx));
+
     functions
+}
+
+#[derive(Clone)]
+pub enum BuiltInGate {
+    U,
+    Cx
+}
+
+impl BuiltInGate {
+    pub fn num_params(&self) -> usize {
+        match self {
+            BuiltInGate::U  => 3,
+            BuiltInGate::Cx => 0,
+        }
+    }
+
+    pub fn apply(&self, sv: &mut StateVector, qubits: &[usize], params: &[f64]) -> Result<(), RuntimeError> {
+        match self {
+            BuiltInGate::U  => sv.apply_single_qubit_gate(&gate_u(params[0], params[1], params[2]), qubits[0]),
+            BuiltInGate::Cx   => sv.apply_two_qubit_gate(&gate_cx(),   qubits[0], qubits[1]),
+        }
+
+        Ok(())
+    }
 }
