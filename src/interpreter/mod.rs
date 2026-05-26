@@ -230,7 +230,12 @@ impl Interpreter {
 
                 Ok(ControlFlow::None)
             },
-            Stmt::Assign { .. } => self.interpret_assignment(stmt),
+            Stmt::Assign { value, .. } => {
+                match value {
+                    Expr::Measure(_) => self.interpret_measure(stmt),
+                    _ => self.interpret_assignment(stmt)
+                }
+            },
             Stmt::Def { name, params, return_type, body } => {
                 self.functions.insert(name.clone(), Function::UserDefined {
                     params: params.clone(),
@@ -338,7 +343,7 @@ impl Interpreter {
                 self.lookup(name).cloned().ok_or(RuntimeError::UndefinedVariable(name.clone()))
             }
             Expr::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
-            Expr::Measure(_) => { todo!() }
+            Expr::Measure(op) => { self.evaluate_measure(op) }
             Expr::Unary { .. } => { self.evaluate_unary(expr) }
             Expr::Binary { .. } => { self.evaluate_binary(expr) }
             Expr::Index { .. } => { todo!() }
@@ -454,6 +459,20 @@ impl Interpreter {
             BinaryOp::Leq => comparison_op!(lhs_evaluated, rhs_evaluated, <=, expr),
             BinaryOp::Geq => comparison_op!(lhs_evaluated, rhs_evaluated, >=, expr),
         }
+    }
+
+    fn evaluate_measure(&mut self, operand: &GateOperand) -> Result<Value, RuntimeError> {
+        let qubit_indices = match operand {
+            GateOperand::Ident(ident) => {
+                self.qubit_map.get(&ident.name)
+                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?
+                    .clone()
+            }
+            GateOperand::HardwareQubit(i) => vec![i.clone() as usize],
+        };
+
+       let value = self.measure_qubits(qubit_indices)?;
+        Ok(value)
     }
 
     fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
@@ -986,5 +1005,45 @@ impl Interpreter {
         }
 
         Ok(ControlFlow::None)
+    }
+
+    fn interpret_measure(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::Assign { target, value, .. } = stmt else {
+            unreachable!();
+        };
+
+        let Expr::Measure(operand) = value else {
+            unreachable!();
+        };
+
+        let qubit_indices = match operand.as_ref() {
+            GateOperand::Ident(ident) => {
+                self.qubit_map.get(&ident.name)
+                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?
+                    .clone()
+            }
+            GateOperand::HardwareQubit(i) => vec![*i as usize],
+        };
+
+        let value = self.measure_qubits(qubit_indices)?;
+        self.assign(&target.name, value)?;
+
+        Ok(ControlFlow::None)
+    }
+
+    fn measure_qubits(&mut self, qubit_indices: Vec<usize>) -> Result<Value, RuntimeError> {
+        let mut result_value: u64 = 0;
+        let width = qubit_indices.len();
+
+        for (bit_pos, &qubit_idx) in qubit_indices.iter().enumerate() {
+            let sv = self.state_vector.as_mut()
+                .ok_or(RuntimeError::NoStateVector)?;
+            let outcome = sv.measure_qubit(qubit_idx);
+            if outcome {
+                result_value |= 1 << bit_pos;
+            }
+        }
+
+        Ok(Value::Bits { value: result_value, width })
     }
 }

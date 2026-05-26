@@ -36,6 +36,26 @@ impl StateVector {
         }
     }
 
+    pub fn measure_qubit(&mut self, qubit: usize) -> bool {
+        let prob_one: f64 = self.amplitudes.iter().enumerate()
+            .filter(|(state, _)| (state >> qubit) & 1 == 1)
+            .map(|(_, amp)| amp.norm_sqr())
+            .sum();
+
+        let outcome = rand::random::<f64>() < prob_one;
+
+        for state in 0..self.amplitudes.len() {
+            let bit = (state >> qubit) & 1;
+            if (bit == 1) != outcome {
+                self.amplitudes[state] = C64::new(0.0, 0.0);
+            }
+        }
+
+        self.renormalize();
+
+        outcome
+    }
+
     pub fn apply_single_qubit_gate(&mut self, gate: &Matrix2, qubit: usize) {
         let size = self.amplitudes.len();
 
