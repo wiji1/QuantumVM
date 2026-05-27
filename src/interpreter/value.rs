@@ -5,9 +5,11 @@ pub enum Value {
     Bool(bool),
     Bits { value: u64, width: usize },
     Complex(f64, f64),
-    Qubit(usize),
+    Qubit(Vec<usize>),
     Void,
     Array(Vec<Value>),
+    Range { start: Option<i64>, stop: Option<i64>, step: Option<i64> },
+
 }
 
 impl PartialEq for Value {

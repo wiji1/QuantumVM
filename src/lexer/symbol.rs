@@ -113,6 +113,7 @@ impl Symbol {
 #[derive(Debug, Clone)]
 pub enum CompoundSymbol {
     LineComment,
+    BlockComment,
     DoubleAsterisk,
     BitShiftLeft,
     BitShiftRight,
@@ -125,7 +126,8 @@ pub enum CompoundSymbol {
     Arrow
 }
 
-static LINE_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^//[^\r\n]*").unwrap());
+pub static LINE_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^//[^\r\n]*").unwrap());
+pub static BLOCK_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)/\*.*?\*/").unwrap());
 
 impl TokenTrait for CompoundSymbol {
     fn try_parse(input: &str) -> Option<(Self, usize)> {

@@ -68,6 +68,33 @@ fn builtin_mod(args: Vec<Value>) -> Result<Value, RuntimeError> {
     }
 }
 
+fn builtin_sizeof(args: Vec<Value>) -> Result<Value, RuntimeError> {
+    match args.len() {
+        1 => match &args[0] {
+            Value::Array(arr) => Ok(Value::Int(arr.len() as i64)),
+            _ => Err(RuntimeError::TypeMismatch("sizeof requires an array".to_string())),
+        },
+        2 => {
+            let dim = match &args[1] {
+                Value::Int(i) => *i as usize,
+                _ => return Err(RuntimeError::TypeMismatch("sizeof dimension must be int".to_string())),
+            };
+            let mut current = &args[0];
+            for _ in 0..dim {
+                match current {
+                    Value::Array(arr) => current = &arr[0],
+                    _ => return Err(RuntimeError::TypeMismatch("sizeof dimension out of range".to_string())),
+                }
+            }
+            match current {
+                Value::Array(arr) => Ok(Value::Int(arr.len() as i64)),
+                _ => Err(RuntimeError::TypeMismatch("sizeof dimension out of range".to_string())),
+            }
+        }
+        _ => Err(RuntimeError::InvalidArgCount(1, args.len())),
+    }
+}
+
 #[derive(Clone)]
 pub enum Function {
     BuiltIn(fn(Vec<Value>) -> Result<Value, RuntimeError>),
@@ -81,9 +108,9 @@ pub fn get_default_functions() -> HashMap<String, Function> {
     functions.insert("sin".to_string(), Function::BuiltIn(builtin_sin));
     functions.insert("cos".to_string(), Function::BuiltIn(builtin_cos));
     functions.insert("tan".to_string(), Function::BuiltIn(builtin_tan));
-    functions.insert("asin".to_string(), Function::BuiltIn(builtin_asin));
-    functions.insert("acos".to_string(), Function::BuiltIn(builtin_acos));
-    functions.insert("atan".to_string(), Function::BuiltIn(builtin_atan));
+    functions.insert("arcsin".to_string(), Function::BuiltIn(builtin_asin));
+    functions.insert("arccos".to_string(), Function::BuiltIn(builtin_acos));
+    functions.insert("arctan".to_string(), Function::BuiltIn(builtin_atan));
     functions.insert("sqrt".to_string(), Function::BuiltIn(builtin_sqrt));
     functions.insert("exp".to_string(), Function::BuiltIn(builtin_exp));
     functions.insert("ln".to_string(), Function::BuiltIn(builtin_ln));
@@ -91,6 +118,7 @@ pub fn get_default_functions() -> HashMap<String, Function> {
     functions.insert("ceil".to_string(), Function::BuiltIn(builtin_ceil));
     functions.insert("pow".to_string(), Function::BuiltIn(builtin_pow));
     functions.insert("mod".to_string(), Function::BuiltIn(builtin_mod));
+    functions.insert("sizeof".to_string(), Function::BuiltIn(builtin_sizeof));
 
     functions.insert("U".to_string(),  Function::BuiltInGate(BuiltInGate::U));
     functions.insert("CX".to_string(), Function::BuiltInGate(BuiltInGate::Cx));

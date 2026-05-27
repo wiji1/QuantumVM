@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use crate::interpreter::control_flow::ControlFlow;
 use crate::interpreter::function::{get_default_functions, BuiltInGate, Function};
+use crate::interpreter::quantum::gates::cartesian_product;
 use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::lexer::Lexer;
@@ -61,7 +62,25 @@ macro_rules! comparison_op {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a $op b)),
             (Value::Bits { value: a, .. }, Value::Bits { value: b, .. }) => Ok(Value::Bool(a $op b)),
             (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) $op b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a $op b as f64)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a $op (b as f64))),
+            (Value::Bits { value: a, .. }, Value::Int(b)) => {
+                let lhs_val: i64 = a as i64;
+                let rhs_val: i64 = b;
+                Ok(Value::Bool(lhs_val $op rhs_val))
+            },
+            (Value::Int(a), Value::Bits { value: b, .. }) => {
+                let lhs_val: i64 = a;
+                let rhs_val: i64 = b as i64;
+                Ok(Value::Bool(lhs_val $op rhs_val))
+            },
+            (Value::Bits { value: a, .. }, Value::Float(b)) => {
+                let lhs_val: f64 = a as f64;
+                Ok(Value::Bool(lhs_val $op b))
+            },
+            (Value::Float(a), Value::Bits { value: b, .. }) => {
+                let rhs_val: f64 = b as f64;
+                Ok(Value::Bool(a $op rhs_val))
+            },
             _ => Err(RuntimeError::UnsupportedOperation($expr.to_string()))
         }
     };
@@ -214,11 +233,11 @@ impl Interpreter {
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
             Stmt::Reset { qubit } => {
-                let qubit_index = self.resolve_qubit(qubit)?;
+                let qubit_indices = self.resolve_qubits(qubit)?;
                 let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
-                sv.reset_qubit(qubit_index);
+                for qubit_index in qubit_indices { sv.reset_qubit(qubit_index); }
                 Ok(ControlFlow::None)
-            },
+            }
             Stmt::ExpressionStatement(expr) => {
                 self.evaluate_expression(expr)?;
                 Ok(ControlFlow::None)
@@ -299,8 +318,9 @@ impl Interpreter {
         let mut dimensions: Vec<i64> = vec![];
 
         for size_expr in size {
-            match size_expr {
-                Expr::Int(i) => dimensions.push(*i),
+            let evaluated = self.evaluate_expression(size_expr)?;
+            match evaluated {
+                Value::Int(i) => dimensions.push(i),
                 _ => return Err(RuntimeError::InvalidSize),
             }
         }
@@ -349,7 +369,10 @@ impl Interpreter {
             Expr::Timing(_) => { todo!() }
             Expr::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
             Expr::Ident(name) => {
-                self.lookup(name).cloned().ok_or(RuntimeError::UndefinedVariable(name.clone()))
+                if let Some(val) = self.lookup(name) { Ok(val.clone()) }
+                else if let Some(indices) = self.qubit_map.get(name) {
+                    Ok(Value::Qubit(indices.clone()))
+                } else { Err(RuntimeError::UndefinedVariable(name.clone())) }
             }
             Expr::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
             Expr::Measure(op) => { self.evaluate_measure(op) }
@@ -361,7 +384,7 @@ impl Interpreter {
                 let value = self.evaluate_expression(expr)?;
                 self.apply_cast(ty, value)
             }
-            Expr::Range { .. } => { todo!() }
+            Expr::Range { .. } => { self.evaluate_range(expr) }
         }
     }
 
@@ -378,22 +401,25 @@ impl Interpreter {
         let mut value = self.lookup(&ident.name).cloned().ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
 
         for expr in &ident.indices {
-            let index = match self.evaluate_expression(expr)? {
-                Value::Int(i) => i,
-                _ => Err(RuntimeError::TypeMismatch("index must be int".to_string()))?,
-            };
-
-            value = match value {
-                Value::Array(arr) => arr.clone().into_iter().nth(index as usize)
-                    .ok_or(RuntimeError::IndexOutOfBounds(index as usize, arr.len()))?,
-                Value::Bits { value, width } => {
-                    let bit_pos = index as usize;
-                    if bit_pos >= width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, width)); }
-                    let bit = (value >> bit_pos) & 1;
-                    Value::Bits { value: bit, width: 1 }
+            let index_val = self.evaluate_expression(expr)?;
+            value = match (value, index_val) {
+                (Value::Array(arr), Value::Int(i)) => {
+                    arr.into_iter().nth(i as usize)
+                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, 0))?
                 }
-                _ => Err(RuntimeError::TypeMismatch("cannot index non-array".to_string()))?
-            }
+                (Value::Array(arr), Value::Range { start, stop, step }) => {
+                    let start = start.unwrap_or(0) as usize;
+                    let stop = stop.unwrap_or(arr.len() as i64) as usize;
+                    let step = step.unwrap_or(1) as usize;
+                    Value::Array((start..stop).step_by(step).map(|i| arr[i].clone()).collect())
+                }
+                (Value::Bits { value, width }, Value::Int(i)) => {
+                    let bit_pos = i as usize;
+                    if bit_pos >= width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, width)); }
+                    Value::Bits { value: (value >> bit_pos) & 1, width: 1 }
+                }
+                _ => return Err(RuntimeError::TypeMismatch("cannot index with this type".to_string())),
+            };
         }
 
         Ok(value)
@@ -445,13 +471,19 @@ impl Interpreter {
             BinaryOp::Add => numeric_op!(lhs_evaluated, rhs_evaluated, +, expr),
             BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr),
             BinaryOp::Mul => numeric_op!(lhs_evaluated, rhs_evaluated, *, expr),
-            BinaryOp::Div => numeric_op!(lhs_evaluated, rhs_evaluated, /, expr),
+            BinaryOp::Div => match (lhs_evaluated, rhs_evaluated) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
+                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
+                _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
+            },
             BinaryOp::Mod => numeric_op!(lhs_evaluated, rhs_evaluated, %, expr),
             BinaryOp::Pow => match (lhs_evaluated, rhs_evaluated) {
-                (Value::Int(a), Value::Int(b))     => Ok(Value::Float((a as f64).powf(b as f64))),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
-                (Value::Int(a), Value::Float(b))   => Ok(Value::Float((a as f64).powf(b))),
-                (Value::Float(a), Value::Int(b))   => Ok(Value::Float(a.powf(b as f64))),
+                (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
+                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
                 _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
             },
             BinaryOp::And => bitwise_op!(lhs_evaluated, rhs_evaluated, &, expr),
@@ -477,17 +509,8 @@ impl Interpreter {
     }
 
     fn evaluate_measure(&mut self, operand: &GateOperand) -> Result<Value, RuntimeError> {
-        let qubit_indices = match operand {
-            GateOperand::Ident(ident) => {
-                self.qubit_map.get(&ident.name)
-                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?
-                    .clone()
-            }
-            GateOperand::HardwareQubit(i) => vec![i.clone() as usize],
-        };
-
-       let value = self.measure_qubits(qubit_indices)?;
-        Ok(value)
+        let qubit_indices = self.resolve_qubits(operand)?;
+        self.measure_qubits(qubit_indices)
     }
 
     fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
@@ -526,7 +549,13 @@ impl Interpreter {
             BinaryOp::Add => numeric_op!(lhs, rhs, +, "+="),
             BinaryOp::Sub => numeric_op!(lhs, rhs, -, "-="),
             BinaryOp::Mul => numeric_op!(lhs, rhs, *, "*="),
-            BinaryOp::Div => numeric_op!(lhs, rhs, /, "/="),
+            BinaryOp::Div => match (lhs, rhs) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
+                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
+                _ => Err(RuntimeError::UnsupportedOperation("/".to_string()))
+            },
             BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%="),
             BinaryOp::And => bitwise_op!(lhs, rhs, &, "&="),
             BinaryOp::Or  => bitwise_op!(lhs, rhs, |, "|="),
@@ -534,10 +563,10 @@ impl Interpreter {
             BinaryOp::Shl => bitwise_op!(lhs, rhs, <<, "<<="),
             BinaryOp::Shr => bitwise_op!(lhs, rhs, >>, ">>="),
             BinaryOp::Pow => match (lhs, rhs) {
-                (Value::Int(a), Value::Int(b))     => Ok(Value::Float((a as f64).powf(b as f64))),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
-                (Value::Int(a), Value::Float(b))   => Ok(Value::Float((a as f64).powf(b))),
-                (Value::Float(a), Value::Int(b))   => Ok(Value::Float(a.powf(b as f64))),
+                (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
+                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
                 _ => Err(RuntimeError::UnsupportedOperation("**=".to_string()))
             },
             _ => Err(RuntimeError::UnsupportedOperation(format!("{:?}", op)))
@@ -545,6 +574,26 @@ impl Interpreter {
     }
 
     fn assign_indexed(&mut self, name: &str, indices: &[Expr], new_value: Value) -> Result<ControlFlow, RuntimeError> {
+        let first_index = self.evaluate_expression(&indices[0])?;
+
+        if let Value::Range { start, stop, step } = first_index {
+            let new_values = match new_value {
+                Value::Array(v) => v,
+                _ => return Err(RuntimeError::TypeMismatch("slice assignment requires array".to_string())),
+            };
+            let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+            if let Value::Array(arr) = target {
+                let start = start.unwrap_or(0) as usize;
+                let stop = stop.unwrap_or(arr.len() as i64) as usize;
+                let step = step.unwrap_or(1) as usize;
+                for (i, val) in (start..stop).step_by(step).zip(new_values) {
+                    arr[i] = val;
+                }
+                return Ok(ControlFlow::None);
+            }
+            return Err(RuntimeError::TypeMismatch("cannot slice non-array".to_string()));
+        }
+
         let evaluated_indices: Vec<usize> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
             Ok(Value::Int(i)) => Ok(i as usize),
             Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
@@ -821,8 +870,16 @@ impl Interpreter {
 
                 self.push_scope();
 
+                let mut qubit_params: Vec<String> = vec![];
+
                 for (param, value) in params.iter().zip(evaluated_args.into_iter()) {
-                    self.define(param.name.clone(), value)?;
+                    match value {
+                        Value::Qubit(indices) => {
+                            self.qubit_map.insert(param.name.clone(), indices);
+                            qubit_params.push(param.name.clone());
+                        }
+                        _ => { self.define(param.name.clone(), value)?; }
+                    }
                 }
 
                 let flow = self.interpret_statements(&body)?;
@@ -975,7 +1032,7 @@ impl Interpreter {
         Ok(ControlFlow::None)
     }
 
-    fn resolve_qubit(&mut self, operand: &GateOperand) -> Result<usize, RuntimeError> {
+    fn resolve_qubits(&mut self, operand: &GateOperand) -> Result<Vec<usize>, RuntimeError> {
         match operand {
             GateOperand::Ident(ident) => {
                 let indices: Vec<usize> = self.qubit_map
@@ -984,8 +1041,7 @@ impl Interpreter {
                     .clone();
 
                 if ident.indices.is_empty() {
-                    if indices.len() == 1 { Ok(indices[0]) }
-                    else { Err(RuntimeError::InvalidQubitAccess(ident.name.clone())) }
+                    Ok(indices.clone())
                 } else {
                     let index = match &ident.indices[0] {
                         Expr::Int(i) => *i as usize,
@@ -994,10 +1050,14 @@ impl Interpreter {
                             _ => return Err(RuntimeError::TypeMismatch("qubit index must be int".to_string(), )),
                         },
                     };
-                    indices.get(index).copied().ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))
+                    let qubit = indices.get(index)
+                        .copied()
+                        .ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))?;
+
+                    Ok(vec![qubit])
                 }
             }
-            GateOperand::HardwareQubit(i) => Ok(*i as usize),
+            GateOperand::HardwareQubit(i) => Ok(vec![*i as usize]),
         }
     }
 
@@ -1007,27 +1067,31 @@ impl Interpreter {
         };
 
         let param_values: Vec<f64> = params.iter()
-            .map(|p| match self.evaluate_expression(p) {
-                Ok(Value::Float(f)) => Ok(f),
-                Ok(Value::Int(i)) => Ok(i as f64),
-                Ok(_) => Err(RuntimeError::TypeMismatch("gate param must be numeric".to_string())),
-                Err(e) => Err(e),
+            .map(|p| {
+                match self.evaluate_expression(p) {
+                    Ok(Value::Float(f)) => Ok(f),
+                    Ok(Value::Int(i)) => Ok(i as f64),
+                    Ok(_) => Err(RuntimeError::TypeMismatch("gate param must be numeric".to_string())),
+                    Err(e) => Err(e),
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let qubit_indices: Vec<usize> = qubits.iter()
-            .map(|q| self.resolve_qubit(q))
+        let qubit_groups: Vec<Vec<usize>> = qubits.iter()
+            .map(|q| self.resolve_qubits(q))
             .collect::<Result<Vec<_>, _>>()?;
 
         let func = self.functions.get(name)
             .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
             .clone();
 
-        let resolved = self.resolve_gate(&func, &param_values)?;
-        let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
-
-        let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
-        modified.apply_to_statevector(sv, &qubit_indices);
+        let combinations = cartesian_product(&qubit_groups);
+        for qubit_indices in combinations {
+            let resolved = self.resolve_gate(&func, &param_values)?;
+            let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+            modified.apply_to_statevector(sv, &qubit_indices);
+        }
 
         Ok(ControlFlow::None)
     }
@@ -1070,19 +1134,21 @@ impl Interpreter {
             for (pname, pval) in param_names.iter().zip(param_values.iter()) {
                 self.define(pname.clone(), Value::Float(*pval))?;
             }
-            self.interpret_statements(body)?;
+            let result = self.interpret_statements(body);
             self.pop_scope();
 
             let col_amps = self.state_vector.as_ref().unwrap().amplitudes.clone();
             columns.push(col_amps);
 
-
             self.state_vector = old_sv;
+            self.state_vector.as_ref().map(|sv| sv.amplitudes.len()).unwrap_or(0);
             self.num_qubits = old_num_qubits;
             for (name, old_indices) in old_qubit_entries {
                 self.qubit_map.remove(&name);
                 if !old_indices.is_empty() { self.qubit_map.insert(name, old_indices); }
             }
+
+            result?;
         }
 
         match n {
@@ -1144,17 +1210,11 @@ impl Interpreter {
             unreachable!();
         };
 
-        let qubit_indices = match operand.as_ref() {
-            GateOperand::Ident(ident) => {
-                self.qubit_map.get(&ident.name)
-                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?
-                    .clone()
-            }
-            GateOperand::HardwareQubit(i) => vec![*i as usize],
-        };
-
+        let qubit_indices = self.resolve_qubits(operand)?;
         let value = self.measure_qubits(qubit_indices)?;
-        self.assign(&target.name, value)?;
+
+        if target.indices.is_empty() { self.assign(&target.name, value)?; }
+        else { self.assign_indexed(&target.name, &target.indices, value)?; }
 
         Ok(ControlFlow::None)
     }
@@ -1172,5 +1232,26 @@ impl Interpreter {
         }
 
         Ok(Value::Bits { value: result_value, width })
+    }
+
+    fn evaluate_int_bound(&mut self, e: &Option<Box<Expr>>) -> Result<Option<i64>, RuntimeError> {
+        match e {
+            Some(e) => match self.evaluate_expression(e)? {
+                Value::Int(i) => Ok(Some(i)),
+                _ => Err(RuntimeError::TypeMismatch("range bound must be int".to_string())),
+            },
+            None => Ok(None),
+        }
+    }
+
+    fn evaluate_range(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+        let Expr::Range { start, stop, step } = expr else {
+            unreachable!();
+        };
+        Ok(Value::Range {
+            start: self.evaluate_int_bound(start)?,
+            stop: self.evaluate_int_bound(stop)?,
+            step: self.evaluate_int_bound(step)?,
+        })
     }
 }

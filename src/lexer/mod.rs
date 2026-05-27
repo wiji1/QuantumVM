@@ -9,7 +9,7 @@ use keyword::Keyword;
 use type_def::TypeDefinition;
 use identifier::Identifier;
 use literal::Literal;
-use crate::lexer::symbol::CompoundAssignment;
+use crate::lexer::symbol::{CompoundAssignment, BLOCK_COMMENT};
 
 pub(crate) trait TokenTrait: Sized {
     fn try_parse(input: &str) -> Option<(Self, usize)>;
@@ -40,6 +40,7 @@ pub struct Lexer {
     payload: String,
     current_line: usize,
     pub tokens: Vec<Token>,
+    in_block_comment: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +58,7 @@ pub struct Token {
 
 impl Lexer  {
     pub(crate) fn new(payload: String) -> Lexer {
-        Lexer { payload, current_line: 0, tokens: vec![] }
+        Lexer { payload, current_line: 0, tokens: vec![], in_block_comment: false }
     }
 
     pub fn start(&mut self) {
@@ -75,6 +76,20 @@ impl Lexer  {
         let mut pos = 0;
 
         while pos < line.len() {
+            if self.in_block_comment {
+                if line[pos..].starts_with("*/") {
+                    self.in_block_comment = false;
+                    pos += 2;
+                } else { pos += 1; }
+                continue;
+            }
+
+            if line[pos..].starts_with("/*") {
+                self.in_block_comment = true;
+                pos += 2;
+                continue;
+            }
+
             let mut char_advance = 1;
 
             let mut span = {

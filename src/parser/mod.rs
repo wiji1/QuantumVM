@@ -158,6 +158,21 @@ impl Parser {
                         })?;
                         Expr::Bits(value, width)
                     }
+                    Literal::String(s) => {
+                        if s.chars().all(|c| c == '0' || c == '1') {
+                            let width = s.len();
+                            let value = u64::from_str_radix(&s, 2).map_err(|_| ParseError::InvalidLiteral {
+                                message: format!("invalid bitstring: {}", s),
+                                span: token.span.clone(),
+                            })?;
+                            Expr::Bits(value, width)
+                        } else {
+                            return Err(ParseError::InvalidLiteral {
+                                message: format!("invalid bitstring: {}", s),
+                                span: token.span.clone(),
+                            });
+                        }
+                    }
                     _ => {
                         return Err(ParseError::InvalidLiteral {
                             message: "not valid in expression context".to_string(),
@@ -182,12 +197,8 @@ impl Parser {
                     expect_token!(self, TokenType::Symbol(Symbol::RParen));
                     Expr::Call { name: s, args }
                 } else if self.at(TokenType::Symbol(Symbol::LBracket)) {
-                    let mut indices = vec![];
-                    while self.at(TokenType::Symbol(Symbol::LBracket)) {
-                        if let Some(idx) = self.extract_index_operand()? {
-                            indices.push(idx);
-                        }
-                    }
+                    let indices = self.parse_index_operands()?;
+
                     if indices.is_empty() { Expr::Ident(s) }
                     else { Expr::IndexedIdent(IndexedIdent { name: s, indices }) }
                 } else { Expr::Ident(s) }
@@ -573,11 +584,7 @@ impl Parser {
             })
         };
 
-
-        let mut indices = vec![];
-        if let Some(idx) = self.extract_index_operand()? {
-            indices.push(idx);
-        }
+        let indices = self.parse_index_operands()?;
 
         Ok(GateOperand::Ident(IndexedIdent { name, indices }))
     }
@@ -658,19 +665,29 @@ impl Parser {
     }
 
     fn has_qubit_operands_after_params(&self) -> bool {
-        let close_paren = self.tokens[self.cursor + 1..]
-            .iter()
-            .position(|t| matches!(t.kind, TokenType::Symbol(Symbol::RParen)));
+        let mut i = self.cursor + 2;
+        let mut depth = 0;
 
-        let Some(offset) = close_paren else {
-            return false;
-        };
+        while i < self.tokens.len() {
+            let kind = &self.tokens[i].kind;
+            i += 1;
 
-        let next = self.cursor + 2 + offset;
-        matches!(
-            self.tokens.get(next).map(|t| &t.kind),
-            Some(TokenType::Identifier(_) | TokenType::Symbol(Symbol::LBracket))
-        )
+            if matches!(kind, TokenType::Symbol(Symbol::LParen)) {
+                depth += 1;
+                continue;
+            }
+            if !matches!(kind, TokenType::Symbol(Symbol::RParen)) { continue; }
+            if depth > 0 {
+                depth -= 1;
+                continue;
+            }
+
+            return matches!(
+                self.tokens.get(i).map(|t| &t.kind),
+                Some(TokenType::Identifier(_) | TokenType::Symbol(Symbol::LBracket))
+            );
+        }
+        false
     }
 
     fn extract_index_operand(&mut self) -> Result<Option<Expr>, ParseError> {
@@ -691,12 +708,7 @@ impl Parser {
             TokenType::Identifier(Identifier::Identifier(String::new()))
         );
 
-        let mut indices = vec![];
-        while self.at(TokenType::Symbol(Symbol::LBracket)) {
-            if let Some(idx) = self.extract_index_operand()? {
-                indices.push(idx);
-            }
-        }
+        let indices = self.parse_index_operands()?;
 
         let op = match &self.peek().kind {
             TokenType::Symbol(Symbol::Equals) => { self.advance(); AssignOp::Eq }
@@ -795,30 +807,13 @@ impl Parser {
             }
             TokenType::Symbol(Symbol::LBracket) => {
                 expect_token!(self, TokenType::Symbol(Symbol::LBracket));
-
-                let mut start: Option<Box<Expr>> = None;
-                let mut stop: Option<Box<Expr>> = None;
-                let mut step: Option<Box<Expr>> = None;
-
-                if !self.at(TokenType::Symbol(Symbol::Colon)) {
-                    start = Some(Box::from(self.parse_expr(0)?));
-                }
-                expect_token!(self, TokenType::Symbol(Symbol::Colon));
-
-                if !self.at(TokenType::Symbol(Symbol::Colon)) && !self.at(TokenType::Symbol(Symbol::RBracket)) {
-                    stop = Some(Box::from(self.parse_expr(0)?));
-                }
-
-                if self.at(TokenType::Symbol(Symbol::Colon)) {
-                    self.advance();
-                    if !self.at(TokenType::Symbol(Symbol::RBracket)) {
-                        step = Some(Box::from(self.parse_expr(0)?));
-                    }
-                }
-
+                let range = self.parse_range_expression(None)?;
                 expect_token!(self, TokenType::Symbol(Symbol::RBracket));
-
-                Ok(ForIter::Range { start, stop, step })
+                Ok(ForIter::Range {
+                    start: if let Expr::Range { start, .. } = &range { start.clone() } else { None },
+                    stop: if let Expr::Range { stop, .. } = &range { stop.clone() } else { None },
+                    step: if let Expr::Range { step, .. } = &range { step.clone() } else { None },
+                })
             }
             TokenType::Identifier(_) => {
                 let expr = self.parse_expr(0)?;
@@ -1129,10 +1124,7 @@ impl Parser {
             TokenType::Identifier(Identifier::Identifier(String::new()))
         );
 
-            let mut indices = vec![];
-            while self.at(TokenType::Symbol(Symbol::LBracket)) {
-                if let Some(idx) = self.extract_index_operand()? { indices.push(idx); }
-            }
+            let indices = self.parse_index_operands()?;
 
             expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
@@ -1145,5 +1137,56 @@ impl Parser {
             expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
             Ok(Stmt::ExpressionStatement(Expr::Measure(Box::new(qubit))))
         }
+    }
+
+    fn parse_index_operands(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut indices = vec![];
+        while self.at(TokenType::Symbol(Symbol::LBracket)) {
+            self.advance();
+
+            if self.at(TokenType::Symbol(Symbol::Colon)) {
+                indices.push(self.parse_range_expression(None)?);
+            } else {
+                let first = self.parse_expr(0)?;
+                if self.at(TokenType::Symbol(Symbol::Colon)) {
+                    indices.push(self.parse_range_expression(Some(first))?);
+                } else if self.at(TokenType::Symbol(Symbol::Comma)) {
+                    let mut exprs = vec![first];
+                    while self.at(TokenType::Symbol(Symbol::Comma)) {
+                        self.advance();
+                        exprs.push(self.parse_expr(0)?);
+                    }
+                    expect_token!(self, TokenType::Symbol(Symbol::RBracket));
+                    indices.extend(exprs);
+                    continue;
+                } else { indices.push(first); }
+            }
+
+            expect_token!(self, TokenType::Symbol(Symbol::RBracket));
+        }
+        Ok(indices)
+    }
+
+    fn parse_range_expression(&mut self, start: Option<Expr>) -> Result<Expr, ParseError> {
+        let start = if start.is_some() { start.map(Box::new) }
+        else if !self.at(TokenType::Symbol(Symbol::Colon)) {
+            Some(Box::new(self.parse_expr(0)?))
+        } else { None };
+
+        expect_token!(self, TokenType::Symbol(Symbol::Colon));
+
+        let stop = if !self.at(TokenType::Symbol(Symbol::Colon))
+            && !self.at(TokenType::Symbol(Symbol::RBracket)) {
+            Some(Box::new(self.parse_expr(0)?))
+        } else { None };
+
+        let step = if self.at(TokenType::Symbol(Symbol::Colon)) {
+            self.advance();
+            if !self.at(TokenType::Symbol(Symbol::RBracket)) {
+                Some(Box::new(self.parse_expr(0)?))
+            } else { None }
+        } else { None };
+
+        Ok(Expr::Range { start, stop, step })
     }
 }

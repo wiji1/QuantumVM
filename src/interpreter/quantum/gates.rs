@@ -185,3 +185,15 @@ pub fn matrix_mul_8(a: &Matrix8, b: &Matrix8) -> Matrix8 {
     }
     result
 }
+
+pub fn cartesian_product(groups: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    groups.iter().fold(vec![vec![]], |acc, group| {
+        acc.iter().flat_map(|existing| {
+            group.iter().map(move |&qubit| {
+                let mut combo = existing.clone();
+                combo.push(qubit);
+                combo
+            })
+        }).collect()
+    })
+}
