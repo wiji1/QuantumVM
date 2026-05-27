@@ -350,6 +350,7 @@ impl Parser {
             TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenType::Keyword(Keyword::Include) => self.parse_include(),
             TokenType::Keyword(Keyword::Measure) => self.parse_arrow_measure(),
+            TokenType::Keyword(Keyword::Let) => self.parse_let(),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Keyword(Keyword::Inv) | TokenType::Keyword(Keyword::Pow) |
             TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => self.parse_gate_call(),
@@ -1188,5 +1189,21 @@ impl Parser {
         } else { None };
 
         Ok(Expr::Range { start, stop, step })
+    }
+
+    fn parse_let(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Let));
+
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+        expect_token!(self, TokenType::Symbol(Symbol::Equals));
+        let value = self.parse_expr(0)?;
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        Ok(Stmt::Let { name, value })
     }
 }

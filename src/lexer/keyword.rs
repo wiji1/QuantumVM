@@ -29,7 +29,8 @@ pub enum Keyword {
     Inv,
     Pow,
     Ctrl,
-    NegCtrl
+    NegCtrl,
+    Let
 }
 
 impl TokenTrait for Keyword {
@@ -119,7 +120,9 @@ impl TokenTrait for Keyword {
         if let Some(len) = match_keyword(input, "negctrl") {
             return Some((Self::NegCtrl, len));
         }
-
+        if let Some(len) = match_keyword(input, "let") {
+            return Some((Self::Let, len));
+        }
         None
     }
 }

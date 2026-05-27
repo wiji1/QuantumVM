@@ -229,6 +229,7 @@ impl Interpreter {
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
             Stmt::Include(s) => self.interpret_include(s),
+            Stmt::Let { .. } => self.interpret_let(stmt),
             Stmt::Barrier { .. } => Ok(ControlFlow::None),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
@@ -398,15 +399,18 @@ impl Interpreter {
     }
 
     fn evaluate_indexed_ident(&mut self, ident: &IndexedIdent) -> Result<Value, RuntimeError> {
-        let mut value = self.lookup(&ident.name).cloned().ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
+        if let Some(indices) = self.qubit_map.get(&ident.name).cloned() {
+            return self.evaluate_qubit_ident(indices, &ident.indices);
+        }
+
+        let mut value = self.lookup(&ident.name).cloned()
+            .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
 
         for expr in &ident.indices {
             let index_val = self.evaluate_expression(expr)?;
             value = match (value, index_val) {
-                (Value::Array(arr), Value::Int(i)) => {
-                    arr.into_iter().nth(i as usize)
-                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, 0))?
-                }
+                (Value::Array(arr), Value::Int(i)) => arr.into_iter().nth(i as usize)
+                    .ok_or(RuntimeError::IndexOutOfBounds(i as usize, 0))?,
                 (Value::Array(arr), Value::Range { start, stop, step }) => {
                     let start = start.unwrap_or(0) as usize;
                     let stop = stop.unwrap_or(arr.len() as i64) as usize;
@@ -414,15 +418,41 @@ impl Interpreter {
                     Value::Array((start..stop).step_by(step).map(|i| arr[i].clone()).collect())
                 }
                 (Value::Bits { value, width }, Value::Int(i)) => {
-                    let bit_pos = i as usize;
-                    if bit_pos >= width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, width)); }
-                    Value::Bits { value: (value >> bit_pos) & 1, width: 1 }
+                    if i as usize >= width { return Err(RuntimeError::IndexOutOfBounds(i as usize, width)); }
+                    Value::Bits { value: (value >> i) & 1, width: 1 }
                 }
                 _ => return Err(RuntimeError::TypeMismatch("cannot index with this type".to_string())),
             };
         }
-
         Ok(value)
+    }
+
+    fn evaluate_qubit_ident(&mut self, indices: Vec<usize>, exprs: &[Expr]) -> Result<Value, RuntimeError> {
+        if exprs.is_empty() { return Ok(Value::Qubit(indices)); }
+
+        let index_val = self.evaluate_expression(&exprs[0])?;
+
+        let selected = match index_val {
+            Value::Int(i) => {
+                let qubit = indices.get(i as usize)
+                    .copied()
+                    .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len()))?;
+                vec![qubit]
+            }
+            Value::Array(arr) => {
+                arr.into_iter().map(|val| match val {
+                    Value::Int(i) => indices.get(i as usize)
+                        .copied()
+                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len())),
+                    _ => Err(RuntimeError::TypeMismatch("qubit set index must be int".to_string())),
+                }).collect::<Result<Vec<_>, _>>()?
+            }
+            _ => return Err(RuntimeError::TypeMismatch("qubit index must be int or set".to_string())),
+        };
+
+        if exprs.len() > 1 { return self.evaluate_qubit_ident(selected, &exprs[1..]); }
+
+        Ok(Value::Qubit(selected))
     }
 
     fn evaluate_unary(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
@@ -870,19 +900,26 @@ impl Interpreter {
 
                 self.push_scope();
 
-                let mut qubit_params: Vec<String> = vec![];
+                let mut qubit_params: Vec<(String, Option<Vec<usize>>)> = vec![];
 
                 for (param, value) in params.iter().zip(evaluated_args.into_iter()) {
                     match value {
                         Value::Qubit(indices) => {
-                            self.qubit_map.insert(param.name.clone(), indices);
-                            qubit_params.push(param.name.clone());
+                            let old = self.qubit_map.insert(param.name.clone(), indices);
+                            qubit_params.push((param.name.clone(), old));
                         }
                         _ => { self.define(param.name.clone(), value)?; }
                     }
                 }
 
                 let flow = self.interpret_statements(&body)?;
+
+                for (name, old_indices) in qubit_params {
+                    match old_indices {
+                        Some(indices) => { self.qubit_map.insert(name, indices); }
+                        None => { self.qubit_map.remove(&name); }
+                    }
+                }
 
                 self.pop_scope();
 
@@ -988,7 +1025,7 @@ impl Interpreter {
     }
 
 
-        fn allocate_qubits(&mut self, name: &str, count: usize) {
+    fn allocate_qubits(&mut self, name: &str, count: usize) {
         let start_index = self.num_qubits;
         let indices: Vec<usize> = (start_index..start_index + count).collect();
         self.qubit_map.insert(name.to_string(), indices);
@@ -1084,6 +1121,18 @@ impl Interpreter {
         let func = self.functions.get(name)
             .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
             .clone();
+
+        if let Function::UserDefined { .. } = &func {
+            let mut args: Vec<Expr> = params.clone();
+            for qubit in qubits {
+                match qubit {
+                    GateOperand::Ident(ident) => args.push(Expr::IndexedIdent(ident.clone())),
+                    GateOperand::HardwareQubit(_) => {}
+                }
+            }
+            self.call_function(name, &args)?;
+            return Ok(ControlFlow::None);
+        }
 
         let combinations = cartesian_product(&qubit_groups);
         for qubit_indices in combinations {
@@ -1253,5 +1302,22 @@ impl Interpreter {
             stop: self.evaluate_int_bound(stop)?,
             step: self.evaluate_int_bound(step)?,
         })
+    }
+
+    fn interpret_let(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
+        let Stmt::Let { name, value} = stmt else {
+            unreachable!();
+        };
+
+        match self.evaluate_expression(value)? {
+            Value::Qubit(indices) => {
+                self.qubit_map.insert(name.clone(), indices);
+                Ok(ControlFlow::None)
+            }
+            other => {
+                self.define(name.clone(), other)?;
+                Ok(ControlFlow::None)
+            }
+        }
     }
 }
