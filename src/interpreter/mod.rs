@@ -9,12 +9,13 @@ use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
 use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use crate::interpreter::control_flow::ControlFlow;
-use crate::interpreter::function::{get_default_functions, Function};
+use crate::interpreter::function::{get_default_functions, BuiltInGate, Function};
+use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::lexer::Lexer;
 use crate::lexer::type_def::TypeDefinition;
@@ -113,6 +114,10 @@ impl Interpreter {
 
     pub fn start(&mut self) {
         self.push_scope();
+
+        let stdgates_source = include_str!("../lib/stdgates.inc");
+        self.interpret_include_from_src(stdgates_source.to_string())
+            .expect("Failed to load stdgates.inc");
 
         let defaults_result = self.define_default_operations();
         match defaults_result {
@@ -875,10 +880,16 @@ impl Interpreter {
     }
 
     fn interpret_include(&mut self, path: &String) -> Result<ControlFlow, RuntimeError> {
+        if *path == "stdgates.inc".to_string() { return Ok(ControlFlow::None); }
+
         let full_path = self.script_dir.join(path);
         let source = std::fs::read_to_string(&full_path)
             .map_err(|_| RuntimeError::FileNotFound(path.clone()))?;
 
+        self.interpret_include_from_src(source)
+    }
+
+    fn interpret_include_from_src(&mut self, source: String) -> Result<ControlFlow, RuntimeError> {
         let mut lexer = Lexer::new(source);
         lexer.start();
 
@@ -889,7 +900,8 @@ impl Interpreter {
         self.interpret_statements(&program.statements)
     }
 
-    fn allocate_qubits(&mut self, name: &str, count: usize) {
+
+        fn allocate_qubits(&mut self, name: &str, count: usize) {
         let start_index = self.num_qubits;
         let indices: Vec<usize> = (start_index..start_index + count).collect();
         self.qubit_map.insert(name.to_string(), indices);
@@ -960,7 +972,7 @@ impl Interpreter {
     }
 
     fn interpret_gate_call(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::GateCall { name, params, qubits } = stmt else {
+        let Stmt::GateCall { name, modifiers, params, qubits } = stmt else {
             unreachable!();
         };
 
@@ -981,30 +993,116 @@ impl Interpreter {
             .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
             .clone();
 
-        match func {
-            Function::BuiltInGate(gate) => {
-                let sv = self.state_vector.as_mut()
-                    .ok_or(RuntimeError::NoStateVector)?;
-                gate.apply(sv, &qubit_indices, &param_values)?;
-            }
-            Function::Gate { params: param_names, qubits: qubit_names, body } => {
-                self.push_scope();
-                for (pname, pval) in param_names.iter().zip(param_values.iter()) {
-                    self.define(pname.clone(), Value::Float(*pval))?;
-                }
-                for (qname, qindex) in qubit_names.iter().zip(qubit_indices.iter()) {
-                    self.qubit_map.insert(qname.clone(), vec![*qindex]);
-                }
-                self.interpret_statements(&body)?;
-                for qname in &qubit_names {
-                    self.qubit_map.remove(qname);
-                }
-                self.pop_scope();
-            }
-            _ => return Err(RuntimeError::UndefinedFunction(name.clone())),
-        }
+        let resolved = self.resolve_gate(&func, &param_values)?;
+        let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
+
+        let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+        modified.apply_to_statevector(sv, &qubit_indices);
 
         Ok(ControlFlow::None)
+    }
+
+    fn resolve_gate(&mut self, func: &Function, param_values: &[f64]) -> Result<ResolvedGate, RuntimeError> {
+        match func {
+            Function::BuiltInGate(gate) => {
+                gate.get_resolved(param_values)
+            }
+            Function::Gate { params, qubits, body } => {
+                self.extract_gate_matrix(params, qubits, body, param_values)
+            }
+            _ => Err(RuntimeError::UndefinedFunction("not a gate".to_string()))
+        }
+    }
+
+    fn extract_gate_matrix(&mut self, param_names: &[String], qubit_names: &[String], body: &[Stmt], param_values: &[f64]) -> Result<ResolvedGate, RuntimeError> {
+        let n = qubit_names.len();
+        let size = 1 << n;
+        let mut columns: Vec<Vec<C64>> = vec![];
+
+        for col in 0..size {
+            let mut sv = StateVector::new(n);
+            sv.amplitudes = vec![C64::new(0.0, 0.0); size];
+            sv.amplitudes[col] = C64::new(1.0, 0.0);
+
+            let old_sv = self.state_vector.replace(sv);
+            let old_num_qubits = self.num_qubits;
+            self.num_qubits = n;
+
+            let old_qubit_entries: Vec<(String, Vec<usize>)> = qubit_names.iter().enumerate()
+                .map(|(i, name)| {
+                    let old = self.qubit_map.remove(name);
+                    self.qubit_map.insert(name.clone(), vec![i]);
+                    (name.clone(), old.unwrap_or_default())
+                })
+                .collect();
+
+            self.push_scope();
+            for (pname, pval) in param_names.iter().zip(param_values.iter()) {
+                self.define(pname.clone(), Value::Float(*pval))?;
+            }
+            self.interpret_statements(body)?;
+            self.pop_scope();
+
+            let col_amps = self.state_vector.as_ref().unwrap().amplitudes.clone();
+            columns.push(col_amps);
+
+
+            self.state_vector = old_sv;
+            self.num_qubits = old_num_qubits;
+            for (name, old_indices) in old_qubit_entries {
+                self.qubit_map.remove(&name);
+                if !old_indices.is_empty() { self.qubit_map.insert(name, old_indices); }
+            }
+        }
+
+        match n {
+            1 => {
+                let m = [[columns[0][0], columns[1][0]], [columns[0][1], columns[1][1]]];
+                Ok(ResolvedGate::SingleQubit(m))
+            }
+            2 => {
+                let mut m = [[C64::new(0.0,0.0); 4]; 4];
+                for col in 0..4 {
+                    for row in 0..4 {
+                        m[row][col] = columns[col][row];
+                    }
+                }
+
+                use crate::interpreter::quantum::gates::swap_qubit_order;
+                let canonical_m = swap_qubit_order(&m);
+
+                Ok(ResolvedGate::TwoQubit(canonical_m))
+            }
+            3 => {
+                let mut m = [[C64::new(0.0,0.0); 8]; 8];
+                for col in 0..8 {
+                    for row in 0..8 {
+                        m[row][col] = columns[col][row];
+                    }
+                }
+                Ok(ResolvedGate::ThreeQubit(m))
+            }
+            _ => Err(RuntimeError::UnsupportedOperation("gates with >3 qubits not supported".to_string()))
+        }
+    }
+
+    fn apply_modifiers_to_gate(&mut self, mut gate: ResolvedGate, modifiers: &[GateModifier]) -> Result<ResolvedGate, RuntimeError> {
+        for modifier in modifiers.iter().rev() {
+            gate = match modifier {
+                GateModifier::Inv => gate.apply_inv(),
+                GateModifier::Pow(expr) => {
+                    let n = match self.evaluate_expression(expr)? {
+                        Value::Int(i) => i,
+                        Value::Float(f) => f as i64,
+                        _ => return Err(RuntimeError::TypeMismatch("pow requires numeric".to_string())),
+                    };
+                    gate.apply_pow(n)
+                }
+                GateModifier::Ctrl(_) => gate.apply_ctrl(),
+                GateModifier::NegCtrl(_) => gate.apply_neg_ctrl(),
+            };
+        }
+        Ok(gate)
     }
 
     fn interpret_measure(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
@@ -1036,8 +1134,7 @@ impl Interpreter {
         let width = qubit_indices.len();
 
         for (bit_pos, &qubit_idx) in qubit_indices.iter().enumerate() {
-            let sv = self.state_vector.as_mut()
-                .ok_or(RuntimeError::NoStateVector)?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
             let outcome = sv.measure_qubit(qubit_idx);
             if outcome {
                 result_value |= 1 << bit_pos;

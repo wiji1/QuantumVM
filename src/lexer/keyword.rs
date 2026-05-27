@@ -25,7 +25,11 @@ pub enum Keyword {
     Default,
     Input,
     Output,
-    Include
+    Include,
+    Inv,
+    Pow,
+    Ctrl,
+    NegCtrl
 }
 
 impl TokenTrait for Keyword {
@@ -102,6 +106,18 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "include") {
             return Some((Self::Include, len));
+        }
+        if let Some(len) = match_keyword(input, "inv") {
+            return Some((Self::Inv, len));
+        }
+        if let Some(len) = match_keyword(input, "pow") {
+            return Some((Self::Pow, len));
+        }
+        if let Some(len) = match_keyword(input, "ctrl") {
+            return Some((Self::Ctrl, len));
+        }
+        if let Some(len) = match_keyword(input, "negctrl") {
+            return Some((Self::NegCtrl, len));
         }
 
         None

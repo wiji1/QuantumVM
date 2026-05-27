@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::interpreter::quantum::gates::*;
+use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::StateVector;
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
@@ -104,19 +105,10 @@ pub enum BuiltInGate {
 }
 
 impl BuiltInGate {
-    pub fn num_params(&self) -> usize {
+    pub fn get_resolved(&self, params: &[f64]) -> Result<ResolvedGate, RuntimeError> {
         match self {
-            BuiltInGate::U  => 3,
-            BuiltInGate::Cx => 0,
+            BuiltInGate::U  => Ok(ResolvedGate::SingleQubit(gate_u(params[0], params[1], params[2]))),
+            BuiltInGate::Cx => Ok(ResolvedGate::TwoQubit(gate_cx())),
         }
-    }
-
-    pub fn apply(&self, sv: &mut StateVector, qubits: &[usize], params: &[f64]) -> Result<(), RuntimeError> {
-        match self {
-            BuiltInGate::U  => sv.apply_single_qubit_gate(&gate_u(params[0], params[1], params[2]), qubits[0]),
-            BuiltInGate::Cx   => sv.apply_two_qubit_gate(&gate_cx(),   qubits[0], qubits[1]),
-        }
-
-        Ok(())
     }
 }

@@ -12,7 +12,7 @@ use crate::lexer::{Span, Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateOperand, IndexedIdent, IoDirection, Param, ParamType, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, Param, ParamType, SwitchCase, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -351,6 +351,8 @@ impl Parser {
             TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenType::Keyword(Keyword::Include) => self.parse_include(),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
+            TokenType::Keyword(Keyword::Inv) | TokenType::Keyword(Keyword::Pow) |
+            TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => self.parse_gate_call(),
             TokenType::Symbol(Symbol::LBrace) => {
                 let stmts = self.parse_block()?;
                 Ok(Stmt::Block(stmts))
@@ -505,11 +507,25 @@ impl Parser {
     fn parse_identifier_list(&mut self, terminator: TokenType) -> Result<Vec<String>, ParseError> {
         let mut items = vec![];
         while !self.at(terminator.clone()) && !self.is_at_end() {
-            let s = extract_token!(
-                self,
-                TokenType::Identifier(Identifier::Identifier(s)) => s,
-                TokenType::Identifier(Identifier::Identifier(String::new()))
-            );
+            self.skip_trivia();
+            if self.at(terminator.clone()) { break; }
+
+            let s = match self.peek().kind.clone() {
+                TokenType::Identifier(Identifier::Identifier(s)) => {
+                    self.advance();
+                    s
+                }
+                TokenType::Keyword(k) => {
+                    let s = format!("{:?}", k);
+                    self.advance();
+                    s
+                }
+                _ => return Err(ParseError::UnexpectedToken {
+                    expected: TokenType::Identifier(Identifier::Identifier(String::new())),
+                    found: self.peek().kind.clone(),
+                    span: self.peek().span.clone(),
+                })
+            };
             items.push(s);
             if self.at(TokenType::Symbol(Symbol::Comma)) { self.advance(); }
         }
@@ -551,11 +567,23 @@ impl Parser {
     }
 
     fn parse_gate_operand(&mut self) -> Result<GateOperand, ParseError> {
-        let name = extract_token!(
-            self,
-            TokenType::Identifier(Identifier::Identifier(s)) => s,
-            TokenType::Identifier(Identifier::Identifier(String::new()))
-        );
+        let name = match self.peek().kind.clone() {
+            TokenType::Identifier(Identifier::Identifier(s)) => {
+                self.advance();
+                s
+            }
+            TokenType::Keyword(k) => {
+                let s = format!("{:?}", k);
+                self.advance();
+                s
+            }
+            _ => return Err(ParseError::UnexpectedToken {
+                expected: TokenType::Identifier(Identifier::Identifier(String::new())),
+                found: self.peek().kind.clone(),
+                span: self.peek().span.clone(),
+            })
+        };
+
 
         let mut indices = vec![];
         if let Some(idx) = self.extract_index_operand()? {
@@ -566,6 +594,11 @@ impl Parser {
     }
 
     fn parse_gate_call(&mut self) -> Result<Stmt, ParseError> {
+        let mut modifiers = vec![];
+        while self.is_gate_modifier() {
+            modifiers.push(self.parse_gate_modifier()?);
+        }
+
         let identifier = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -583,7 +616,56 @@ impl Parser {
         let qubits: Vec<GateOperand> = self.parse_gate_operand_list(TokenType::Symbol(Symbol::Semicolon))?;
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
-        Ok(Stmt::GateCall { name: identifier, params, qubits})
+        Ok(Stmt::GateCall { name: identifier, modifiers, params, qubits})
+    }
+
+    fn is_gate_modifier(&self) -> bool {
+        matches!(self.peek().kind,
+            TokenType::Keyword(Keyword::Inv)
+            | TokenType::Keyword(Keyword::Pow)
+            | TokenType::Keyword(Keyword::Ctrl)
+            | TokenType::Keyword(Keyword::NegCtrl)
+        )
+    }
+
+    fn parse_gate_modifier(&mut self) -> Result<GateModifier, ParseError> {
+        let modifier = match self.peek().kind.clone() {
+            TokenType::Keyword(Keyword::Inv) => {
+                self.advance();
+                GateModifier::Inv
+            }
+            TokenType::Keyword(Keyword::Pow) => {
+                self.advance();
+                expect_token!(self, TokenType::Symbol(Symbol::LParen));
+                let expr = self.parse_expr(0)?;
+                expect_token!(self, TokenType::Symbol(Symbol::RParen));
+                GateModifier::Pow(expr)
+            }
+            TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => {
+                let token = self.advance().kind.clone();
+                let count = if self.at(TokenType::Symbol(Symbol::LParen)) {
+                    self.advance();
+                    let expr = self.parse_expr(0)?;
+                    expect_token!(self, TokenType::Symbol(Symbol::RParen));
+                    Some(expr)
+                } else {
+                    None
+                };
+
+                match token {
+                    TokenType::Keyword(Keyword::Ctrl) => GateModifier::Ctrl(count),
+                    TokenType::Keyword(Keyword::NegCtrl) => GateModifier::NegCtrl(count),
+                    _ => unreachable!(),
+                }
+            }
+            _ => return Err(ParseError::InvalidStatement {
+                found: self.peek().kind.clone(),
+                span: self.peek().span.clone(),
+            })
+        };
+
+        expect_token!(self, TokenType::Symbol(Symbol::At));
+        Ok(modifier)
     }
 
     fn has_qubit_operands_after_params(&self) -> bool {

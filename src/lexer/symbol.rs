@@ -29,6 +29,7 @@ pub enum Symbol {
     RParen,
     LBrace,
     RBrace,
+    At
 }
 
 impl TokenTrait for Symbol {
@@ -60,6 +61,7 @@ impl TokenTrait for Symbol {
             ')' => Some((Symbol::RParen, 1)),
             '{' => Some((Symbol::LBrace, 1)),
             '}' => Some((Symbol::RBrace, 1)),
+            '@' => Some((Symbol::At, 1)),
             _ => None
         }
     }

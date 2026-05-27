@@ -72,17 +72,19 @@ impl StateVector {
         }
     }
 
-    pub fn apply_two_qubit_gate(&mut self, gate: &Matrix4, control: usize, target: usize) {
+    pub fn apply_two_qubit_gate(&mut self, gate: &Matrix4, qubit0: usize, qubit1: usize) {
         let size = self.amplitudes.len();
+        let (q0_bit, q1_bit) = if qubit0 < qubit1 { (qubit0, qubit1) } else
+        { (qubit1, qubit0) };
 
         for state in 0..size {
-            if (state >> control) & 1 == 1 { continue; }
-            if (state >> target) & 1 == 1 { continue; }
+            if (state >> q0_bit) & 1 == 1 { continue; }
+            if (state >> q1_bit) & 1 == 1 { continue; }
 
             let s00 = state;
-            let s01 = state | (1 << target);
-            let s10 = state | (1 << control);
-            let s11 = state | (1 << control) | (1 << target);
+            let s01 = state | (1 << q0_bit);
+            let s10 = state | (1 << q1_bit);
+            let s11 = state | (1 << q0_bit) | (1 << q1_bit);
 
             let a00 = self.amplitudes[s00];
             let a01 = self.amplitudes[s01];

@@ -81,6 +81,14 @@ pub enum IoDirection {
 }
 
 #[derive(Debug, Clone)]
+pub enum GateModifier {
+    Inv,
+    Pow(Expr),
+    Ctrl(Option<Expr>),
+    NegCtrl(Option<Expr>),
+}
+
+#[derive(Debug, Clone)]
 pub enum ClassicalType {
     Bit(Option<Expr>),
     Int(Option<Expr>),
