@@ -68,12 +68,6 @@ impl Lexer  {
             self.parse_line(&owned_string);
             self.current_line += 1;
         });
-
-        println!("Finished Lexing!");
-
-        for x in &self.tokens {
-            println!("{:?}", x.kind);
-        }
     }
 
     //TODO: Clean up this code

@@ -204,16 +204,21 @@ impl Interpreter {
             Stmt::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
             Stmt::ConstDecl { .. } => self.interpret_const_declaration(stmt),
             Stmt::GateCall { .. } => self.interpret_gate_call(stmt),
-            Stmt::Reset { .. } => todo!(),
-            Stmt::Barrier { .. } => todo!(),
             Stmt::If { .. } => self.interpret_if(stmt),
             Stmt::Switch { .. } => self.interpret_switch(stmt),
             Stmt::For { .. } => self.interpret_for(stmt),
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
             Stmt::Include(s) => self.interpret_include(s),
+            Stmt::Barrier { .. } => Ok(ControlFlow::None),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
+            Stmt::Reset { qubit } => {
+                let qubit_index = self.resolve_qubit(qubit)?;
+                let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+                sv.reset_qubit(qubit_index);
+                Ok(ControlFlow::None)
+            },
             Stmt::ExpressionStatement(expr) => {
                 self.evaluate_expression(expr)?;
                 Ok(ControlFlow::None)

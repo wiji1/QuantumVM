@@ -92,15 +92,6 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
 
-        //TODO: Remove debug
-        if let Some(v) = &version {
-            println!("Version: {}", v);
-        }
-
-        for x in &statements {
-            println!("{:?}", x)
-        }
-
         Ok(Program { version, statements })
     }
 
@@ -150,7 +141,6 @@ impl Parser {
     fn parse_atom(&mut self) -> Result<Expr, ParseError> {
         let token = self.peek().clone();
 
-        println!("Parsing Token: {:?}", token.kind.clone());
         let parsed = match token.kind {
             TokenType::Literal(l) => {
                 self.advance();
@@ -330,8 +320,6 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
         self.skip_trivia();
 
-        println!("Parsing statement {:?}", self.peek().kind);
-
         match self.peek().kind {
             TokenType::TypeDef(TypeDefinition::Qubit) => self.parse_quantum_decl(),
             TokenType::TypeDef(TypeDefinition::Array) => self.parse_array_decl(),
@@ -350,6 +338,7 @@ impl Parser {
             TokenType::Keyword(Keyword::Def) => self.parse_def(),
             TokenType::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenType::Keyword(Keyword::Include) => self.parse_include(),
+            TokenType::Keyword(Keyword::Measure) => self.parse_arrow_measure(),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Keyword(Keyword::Inv) | TokenType::Keyword(Keyword::Pow) |
             TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => self.parse_gate_call(),
@@ -1125,5 +1114,36 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::Include(path))
+    }
+
+    fn parse_arrow_measure(&mut self) -> Result<Stmt, ParseError> {
+        expect_token!(self, TokenType::Keyword(Keyword::Measure));
+
+        let qubit = self.parse_gate_operand()?;
+
+        if self.at(TokenType::CompoundSymbol(CompoundSymbol::Arrow)) {
+            self.advance();
+            let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+            let mut indices = vec![];
+            while self.at(TokenType::Symbol(Symbol::LBracket)) {
+                if let Some(idx) = self.extract_index_operand()? { indices.push(idx); }
+            }
+
+            expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+            Ok(Stmt::Assign {
+                target: IndexedIdent { name, indices },
+                op: AssignOp::Eq,
+                value: Expr::Measure(Box::new(qubit)),
+            })
+        } else {
+            expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+            Ok(Stmt::ExpressionStatement(Expr::Measure(Box::new(qubit))))
+        }
     }
 }

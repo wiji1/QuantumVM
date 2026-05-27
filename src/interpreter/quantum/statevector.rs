@@ -56,6 +56,13 @@ impl StateVector {
         outcome
     }
 
+    pub fn reset_qubit(&mut self, qubit: usize) {
+        for state in 0..self.amplitudes.len() {
+            if (state >> qubit) & 1 == 1 { self.amplitudes[state] = C64::new(0.0, 0.0); }
+        }
+        self.renormalize();
+    }
+
     pub fn apply_single_qubit_gate(&mut self, gate: &Matrix2, qubit: usize) {
         let size = self.amplitudes.len();
 
