@@ -12,7 +12,6 @@ pub enum Stmt {
 
     GateCall { name: String, modifiers: Vec<GateModifier>, params: Vec<Expr>, qubits: Vec<GateOperand> },
     ExpressionStatement(Expr),
-    Measure { qubit: GateOperand, target: Option<IndexedIdent> },
     Reset { qubit: GateOperand },
     Barrier { qubits: Vec<GateOperand> },
 

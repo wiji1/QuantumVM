@@ -204,7 +204,6 @@ impl Interpreter {
             Stmt::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
             Stmt::ConstDecl { .. } => self.interpret_const_declaration(stmt),
             Stmt::GateCall { .. } => self.interpret_gate_call(stmt),
-            Stmt::Measure { .. } => todo!(),
             Stmt::Reset { .. } => todo!(),
             Stmt::Barrier { .. } => todo!(),
             Stmt::If { .. } => self.interpret_if(stmt),
@@ -382,6 +381,12 @@ impl Interpreter {
             value = match value {
                 Value::Array(arr) => arr.clone().into_iter().nth(index as usize)
                     .ok_or(RuntimeError::IndexOutOfBounds(index as usize, arr.len()))?,
+                Value::Bits { value, width } => {
+                    let bit_pos = index as usize;
+                    if bit_pos >= width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, width)); }
+                    let bit = (value >> bit_pos) & 1;
+                    Value::Bits { value: bit, width: 1 }
+                }
                 _ => Err(RuntimeError::TypeMismatch("cannot index non-array".to_string()))?
             }
         }
@@ -534,21 +539,41 @@ impl Interpreter {
         }
     }
 
-    fn assign_indexed(&mut self, name: &str, indices: &[Expr], value: Value) -> Result<ControlFlow, RuntimeError> {
+    fn assign_indexed(&mut self, name: &str, indices: &[Expr], new_value: Value) -> Result<ControlFlow, RuntimeError> {
         let evaluated_indices: Vec<usize> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
             Ok(Value::Int(i)) => Ok(i as usize),
             Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
             Err(e) => Err(e),
         }).collect::<Result<Vec<usize>, RuntimeError>>()?;
 
-        let arr = self.lookup_mut(name);
-        match arr {
-            Some(Value::Array(a)) => {
-                Self::set_nested_evaluated(a.as_mut(), &evaluated_indices, value)?;
+        let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+
+        match target {
+            Value::Bits { value, width } => {
+                let bit_pos = evaluated_indices[0];
+                if bit_pos >= *width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, *width)); }
+                match new_value {
+                    Value::Bits { value: new_bit, .. } => {
+                        if new_bit != 0 { *value |= 1 << bit_pos; }
+                        else { *value &= !(1 << bit_pos); }
+                    }
+                    Value::Bool(b) => {
+                        if b { *value |= 1 << bit_pos; }
+                        else { *value &= !(1 << bit_pos); }
+                    }
+                    Value::Int(i) => {
+                        if i != 0 { *value |= 1 << bit_pos; }
+                        else { *value &= !(1 << bit_pos); }
+                    }
+                    _ => return Err(RuntimeError::TypeMismatch("cannot assign to bit register".to_string())),
+                }
                 Ok(ControlFlow::None)
             }
-            Some(_) => { Err(RuntimeError::TypeMismatch("only arrays can be index assigned".to_string())) }
-            None => { Err(RuntimeError::NullPointer) }
+            Value::Array(a) => {
+                Self::set_nested_evaluated(a, &evaluated_indices, new_value)?;
+                Ok(ControlFlow::None)
+            }
+            _ => Err(RuntimeError::TypeMismatch("only arrays and bit registers can be index assigned".to_string()))
         }
     }
 
@@ -945,11 +970,13 @@ impl Interpreter {
         Ok(ControlFlow::None)
     }
 
-    fn resolve_qubit(&self, operand: &GateOperand) -> Result<usize, RuntimeError> {
+    fn resolve_qubit(&mut self, operand: &GateOperand) -> Result<usize, RuntimeError> {
         match operand {
             GateOperand::Ident(ident) => {
-                let indices = self.qubit_map.get(&ident.name)
-                    .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
+                let indices: Vec<usize> = self.qubit_map
+                    .get(&ident.name)
+                    .ok_or_else(|| RuntimeError::UndefinedVariable(ident.name.clone()))?
+                    .clone();
 
                 if ident.indices.is_empty() {
                     if indices.len() == 1 { Ok(indices[0]) }
@@ -957,14 +984,12 @@ impl Interpreter {
                 } else {
                     let index = match &ident.indices[0] {
                         Expr::Int(i) => *i as usize,
-                        _ => {
-                            // evaluate the index expression
-                            todo!("dynamic qubit indices")
-                        }
+                        _ => match self.evaluate_expression(&ident.indices[0])? {
+                            Value::Int(i) => i as usize,
+                            _ => return Err(RuntimeError::TypeMismatch("qubit index must be int".to_string(), )),
+                        },
                     };
-                    indices.get(index)
-                        .copied()
-                        .ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))
+                    indices.get(index).copied().ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))
                 }
             }
             GateOperand::HardwareQubit(i) => Ok(*i as usize),
