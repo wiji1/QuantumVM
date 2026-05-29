@@ -34,15 +34,11 @@ fn main() {
 
             //TODO: display output values
             println!("Outputs: {:?}", interpreter.get_outputs().values());
-            println!("StateVector: {:?}", interpreter.get_state_vector())
+            // println!("StateVector: {:?}", interpreter.get_state_vector())
 
         }
         Err(error) => { panic!("{}", error); }
     }
-}
-
-fn error(line: u8, message: &str) {
-    panic!("Error on line {}: {}", line, message);
 }
 
 

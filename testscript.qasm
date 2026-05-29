@@ -4,7 +4,7 @@
  */
 include "stdgates.inc";
 
-const int[32] n_pairs = 10;  // number of teleportations to do
+const int[32] n_pairs = 12;  // number of teleportations to do
 
 def bellprep(qubit[2] q) {
   reset q;

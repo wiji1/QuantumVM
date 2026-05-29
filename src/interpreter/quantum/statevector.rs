@@ -1,5 +1,6 @@
 use crate::interpreter::quantum::gates::{Matrix2, Matrix4, Matrix8};
 use num_complex::Complex;
+use rayon::prelude::*;
 
 pub type C64 = Complex<f64>;
 
@@ -65,62 +66,91 @@ impl StateVector {
 
     pub fn apply_single_qubit_gate(&mut self, gate: &Matrix2, qubit: usize) {
         let size = self.amplitudes.len();
+        let half_size = size >> 1;
+        let low_mask = (1 << qubit) - 1;
+        let high_mask = !low_mask;
 
-        for state in 0..size {
-            if (state >> qubit) & 1 == 1 { continue; }
-
+        let updates: Vec<_> = (0..half_size).into_par_iter().map(|i| {
+            let low = i & low_mask;
+            let high = (i & high_mask) << 1;
+            let state = low | high;
             let partner = state | (1 << qubit);
 
             let a0 = self.amplitudes[state];
             let a1 = self.amplitudes[partner];
 
-            self.amplitudes[state] = gate[0][0] * a0 + gate[0][1] * a1;
-            self.amplitudes[partner] = gate[1][0] * a0 + gate[1][1] * a1;
+            let new_state = gate[0][0] * a0 + gate[0][1] * a1;
+            let new_partner = gate[1][0] * a0 + gate[1][1] * a1;
+
+            (state, partner, new_state, new_partner)
+        }).collect();
+
+        for (state, partner, new_state, new_partner) in updates {
+            self.amplitudes[state] = new_state;
+            self.amplitudes[partner] = new_partner;
         }
     }
-
+    
     pub fn apply_two_qubit_gate(&mut self, gate: &Matrix4, qubit0: usize, qubit1: usize) {
         let size = self.amplitudes.len();
         let (q0_bit, q1_bit) = if qubit0 < qubit1 { (qubit0, qubit1) } else
         { (qubit1, qubit0) };
 
-        for state in 0..size {
-            if (state >> q0_bit) & 1 == 1 { continue; }
-            if (state >> q1_bit) & 1 == 1 { continue; }
+        let quarter_size = size >> 2;
 
-            let s00 = state;
-            let s01 = state | (1 << q0_bit);
-            let s10 = state | (1 << q1_bit);
-            let s11 = state | (1 << q0_bit) | (1 << q1_bit);
+        let updates: Vec<_> = (0..quarter_size).into_par_iter().map(|i| {
+            let low = i & ((1 << q0_bit) - 1);
+            let mid = (i >> q0_bit) & ((1 << (q1_bit - q0_bit - 1)) - 1);
+            let high = i >> (q1_bit - 1);
+
+            let s00 = low | (mid << (q0_bit + 1)) | (high << (q1_bit + 1));
+            let s01 = s00 | (1 << q0_bit);
+            let s10 = s00 | (1 << q1_bit);
+            let s11 = s00 | (1 << q0_bit) | (1 << q1_bit);
 
             let a00 = self.amplitudes[s00];
             let a01 = self.amplitudes[s01];
             let a10 = self.amplitudes[s10];
             let a11 = self.amplitudes[s11];
 
-            self.amplitudes[s00] = gate[0][0]*a00 + gate[0][1]*a01 + gate[0][2]*a10 + gate[0][3]*a11;
-            self.amplitudes[s01] = gate[1][0]*a00 + gate[1][1]*a01 + gate[1][2]*a10 + gate[1][3]*a11;
-            self.amplitudes[s10] = gate[2][0]*a00 + gate[2][1]*a01 + gate[2][2]*a10 + gate[2][3]*a11;
-            self.amplitudes[s11] = gate[3][0]*a00 + gate[3][1]*a01 + gate[3][2]*a10 + gate[3][3]*a11;
+            let new_00 = gate[0][0]*a00 + gate[0][1]*a01 + gate[0][2]*a10 + gate[0][3]*a11;
+            let new_01 = gate[1][0]*a00 + gate[1][1]*a01 + gate[1][2]*a10 + gate[1][3]*a11;
+            let new_10 = gate[2][0]*a00 + gate[2][1]*a01 + gate[2][2]*a10 + gate[2][3]*a11;
+            let new_11 = gate[3][0]*a00 + gate[3][1]*a01 + gate[3][2]*a10 + gate[3][3]*a11;
+
+            (s00, s01, s10, s11, new_00, new_01, new_10, new_11)
+        }).collect();
+
+        for (s00, s01, s10, s11, new_00, new_01, new_10, new_11) in updates {
+            self.amplitudes[s00] = new_00;
+            self.amplitudes[s01] = new_01;
+            self.amplitudes[s10] = new_10;
+            self.amplitudes[s11] = new_11;
         }
     }
 
     pub fn apply_three_qubit_gate(&mut self, gate: &Matrix8, q0: usize, q1: usize, q2: usize) {
         let size = self.amplitudes.len();
+        let eighth_size = size >> 3;
 
-        for state in 0..size {
-            if (state >> q0) & 1 == 1 { continue; }
-            if (state >> q1) & 1 == 1 { continue; }
-            if (state >> q2) & 1 == 1 { continue; }
+        let mut qubits = [q0, q1, q2];
+        qubits.sort_unstable();
+        let [qa, qb, qc] = qubits;
 
-            let s000 = state;
-            let s001 = state | (1 << q2);
-            let s010 = state | (1 << q1);
-            let s011 = state | (1 << q1) | (1 << q2);
-            let s100 = state | (1 << q0);
-            let s101 = state | (1 << q0) | (1 << q2);
-            let s110 = state | (1 << q0) | (1 << q1);
-            let s111 = state | (1 << q0) | (1 << q1) | (1 << q2);
+        for i in 0..eighth_size {
+            let low = i & ((1 << qa) - 1);
+            let mid1 = (i >> qa) & ((1 << (qb - qa - 1)) - 1);
+            let mid2 = (i >> (qb - 1)) & ((1 << (qc - qb - 1)) - 1);
+            let high = i >> (qc - 2);
+
+            let s000 = low | (mid1 << (qa + 1)) | (mid2 << (qb + 1)) | (high << (qc + 1));
+            let s001 = s000 | (1 << q2);
+            let s010 = s000 | (1 << q1);
+            let s011 = s000 | (1 << q1) | (1 << q2);
+            let s100 = s000 | (1 << q0);
+            let s101 = s000 | (1 << q0) | (1 << q2);
+            let s110 = s000 | (1 << q0) | (1 << q1);
+            let s111 = s000 | (1 << q0) | (1 << q1) | (1 << q2);
 
             let indices = [s000, s001, s010, s011, s100, s101, s110, s111];
             let amps: Vec<C64> = indices.iter().map(|&i| self.amplitudes[i]).collect();

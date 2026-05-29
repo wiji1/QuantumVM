@@ -2,6 +2,7 @@ use crate::interpreter::quantum::gates::*;
 use crate::interpreter::quantum::statevector::StateVector;
 use crate::interpreter::quantum::gates::swap_qubit_order;
 
+#[derive(Clone, Copy)]
 pub enum ResolvedGate {
     SingleQubit(Matrix2),
     TwoQubit(Matrix4),

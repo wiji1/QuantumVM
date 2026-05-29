@@ -14,7 +14,7 @@ use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use crate::interpreter::control_flow::ControlFlow;
-use crate::interpreter::function::{get_default_functions, BuiltInGate, Function};
+use crate::interpreter::function::{get_default_functions, Function};
 use crate::interpreter::quantum::gates::cartesian_product;
 use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::{StateVector, C64};
@@ -97,6 +97,10 @@ pub struct Interpreter {
     state_vector: Option<StateVector>,
     qubit_map: HashMap<String, Vec<usize>>,
     num_qubits: usize,
+    /// Cache for gate matrices by (name, parameters)
+    /// Caches both parameter-free gates (h, x, cx) and parameterized gates (rz(pi/4), rx(theta))
+    /// Parameters are hashed as bits to handle floating point comparisons
+    gate_cache: HashMap<(String, Vec<u64>), ResolvedGate>,
 }
 
 impl Interpreter {
@@ -112,6 +116,7 @@ impl Interpreter {
             state_vector: None,
             qubit_map: HashMap::new(),
             num_qubits: 0,
+            gate_cache: HashMap::new(),
         }
     }
 
@@ -1134,9 +1139,10 @@ impl Interpreter {
             return Ok(ControlFlow::None);
         }
 
+        let resolved = self.resolve_gate(name, &func, &param_values)?;
+
         let combinations = cartesian_product(&qubit_groups);
         for qubit_indices in combinations {
-            let resolved = self.resolve_gate(&func, &param_values)?;
             let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
             let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
             modified.apply_to_statevector(sv, &qubit_indices);
@@ -1144,14 +1150,21 @@ impl Interpreter {
 
         Ok(ControlFlow::None)
     }
-
-    fn resolve_gate(&mut self, func: &Function, param_values: &[f64]) -> Result<ResolvedGate, RuntimeError> {
+    
+    fn resolve_gate(&mut self, name: &str, func: &Function, param_values: &[f64]) -> Result<ResolvedGate, RuntimeError> {
         match func {
             Function::BuiltInGate(gate) => {
                 gate.get_resolved(param_values)
             }
             Function::Gate { params, qubits, body } => {
-                self.extract_gate_matrix(params, qubits, body, param_values)
+                let param_bits: Vec<u64> = param_values.iter().map(|f| f.to_bits()).collect();
+                let cache_key = (name.to_string(), param_bits);
+
+                if let Some(cached) = self.gate_cache.get(&cache_key) { return Ok(*cached); }
+
+                let resolved = self.extract_gate_matrix(params, qubits, body, param_values)?;
+                self.gate_cache.insert(cache_key, resolved);
+                Ok(resolved)
             }
             _ => Err(RuntimeError::UndefinedFunction("not a gate".to_string()))
         }
