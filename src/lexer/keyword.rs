@@ -30,7 +30,12 @@ pub enum Keyword {
     Pow,
     Ctrl,
     NegCtrl,
-    Let
+    Let,
+    GPhase,
+    CReg,
+    QReg,
+    Extern,
+    Pragma
 }
 
 impl TokenTrait for Keyword {
@@ -122,6 +127,21 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "let") {
             return Some((Self::Let, len));
+        }
+        if let Some(len) = match_keyword(input, "gphase") {
+            return Some((Self::GPhase, len));
+        }
+        if let Some(len) = match_keyword(input, "creg") {
+            return Some((Self::CReg, len));
+        }
+        if let Some(len) = match_keyword(input, "qreg") {
+            return Some((Self::QReg, len));
+        }
+        if let Some(len) = match_keyword(input, "extern") {
+            return Some((Self::Extern, len));
+        }
+        if let Some(len) = match_keyword(input, "pragma") {
+            return Some((Self::Pragma, len));
         }
         None
     }

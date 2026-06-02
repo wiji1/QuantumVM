@@ -101,6 +101,7 @@ pub enum Function {
     BuiltInGate(BuiltInGate),
     UserDefined { params: Vec<Param>, return_type: Option<(TypeDefinition, Option<Expr>)>, body: Vec<Stmt> },
     Gate { params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
+    Extern
 }
 
 pub fn get_default_functions() -> HashMap<String, Function> {

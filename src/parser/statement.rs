@@ -28,7 +28,10 @@ pub enum Stmt {
 
     Assign { target: IndexedIdent, op: AssignOp, value: Expr },
     Let { name: String, value: Expr },
+    Extern { name: String },
 
     Block(Vec<Stmt>),
     Include(String),
+    GPhase(Option<Vec<Expr>>),
+    Pragma
 }

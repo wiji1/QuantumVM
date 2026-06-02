@@ -236,6 +236,8 @@ impl Interpreter {
             Stmt::Include(s) => self.interpret_include(s),
             Stmt::Let { .. } => self.interpret_let(stmt),
             Stmt::Barrier { .. } => Ok(ControlFlow::None),
+            Stmt::GPhase { .. } => Ok(ControlFlow::None),
+            Stmt::Pragma => Ok(ControlFlow::None),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
             Stmt::Reset { qubit } => {
@@ -285,6 +287,10 @@ impl Interpreter {
 
                 Ok(flow)
             },
+            Stmt::Extern { name } => {
+                self.functions.insert(name.clone(), Function::Extern);
+                Ok(ControlFlow::None)
+            }
         }
     }
 
@@ -936,6 +942,10 @@ impl Interpreter {
                     }
                 }
             },
+            Function::Extern => {
+                println!("Warning: extern function '{}' called, returning void", name);
+                Ok(Value::Void)
+            }
             Function::Gate { .. } | Function::BuiltInGate { .. } => {
                 Err(RuntimeError::InvalidCall(
                     format!("'{}' is a gate and cannot be called as a classical function", name)
@@ -1150,7 +1160,7 @@ impl Interpreter {
 
         Ok(ControlFlow::None)
     }
-    
+
     fn resolve_gate(&mut self, name: &str, func: &Function, param_values: &[f64]) -> Result<ResolvedGate, RuntimeError> {
         match func {
             Function::BuiltInGate(gate) => {

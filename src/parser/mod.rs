@@ -351,6 +351,11 @@ impl Parser {
             TokenType::Keyword(Keyword::Include) => self.parse_include(),
             TokenType::Keyword(Keyword::Measure) => self.parse_arrow_measure(),
             TokenType::Keyword(Keyword::Let) => self.parse_let(),
+            TokenType::Keyword(Keyword::GPhase) => self.parse_gphase(),
+            TokenType::Keyword(Keyword::CReg) => self.parse_creg(),
+            TokenType::Keyword(Keyword::QReg) => self.parse_qreg(),
+            TokenType::Keyword(Keyword::Extern) => self.parse_extern(),
+            TokenType::Keyword(Keyword::Pragma) => self.parse_pragma(),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Keyword(Keyword::Inv) | TokenType::Keyword(Keyword::Pow) |
             TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => self.parse_gate_call(),
@@ -1205,5 +1210,83 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         Ok(Stmt::Let { name, value })
+    }
+
+    fn parse_gphase(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        let mut exprs = None;
+        if self.at(TokenType::Symbol(Symbol::LParen)) {
+            self.advance();
+            exprs = Some(self.parse_expression_list(TokenType::Symbol(Symbol::RParen))?);
+             expect_token!(self, TokenType::Symbol(Symbol::RParen));
+        }
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::GPhase(exprs))
+    }
+
+    fn parse_qreg(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+        let size = self.extract_index_operand()?;
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::QuantumDecl { name, size })
+    }
+
+    fn parse_creg(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+            let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+        let size = self.extract_index_operand()?;
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::ClassicalDecl {
+            ty: TypeDefinition::Bit,
+            name,
+            size,
+            init: None
+        })
+    }
+
+    fn parse_extern(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        let name = extract_token!(
+            self,
+            TokenType::Identifier(Identifier::Identifier(s)) => s,
+            TokenType::Identifier(Identifier::Identifier(String::new()))
+        );
+
+        expect_token!(self, TokenType::Symbol(Symbol::LParen));
+        let mut depth = 1;
+        while depth > 0 && !self.is_at_end() {
+            match self.peek().kind {
+                TokenType::Symbol(Symbol::LParen) => { depth += 1; self.advance(); }
+                TokenType::Symbol(Symbol::RParen) => { depth -= 1; self.advance(); }
+                _ => { self.advance(); }
+            }
+        }
+
+        if self.at(TokenType::CompoundSymbol(CompoundSymbol::Arrow)) {
+            self.advance();
+            self.advance();
+            let _ = self.extract_index_operand()?;
+        }
+
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+        Ok(Stmt::Extern { name })
+    }
+
+    fn parse_pragma(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        while !self.is_at_end() && !self.at(TokenType::Symbol(Symbol::NewLine)) {
+            self.advance();
+        }
+        Ok(Stmt::Pragma)
     }
 }
