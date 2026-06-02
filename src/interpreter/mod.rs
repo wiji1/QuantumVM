@@ -424,8 +424,11 @@ impl Interpreter {
         for expr in &ident.indices {
             let index_val = self.evaluate_expression(expr)?;
             value = match (value, index_val) {
-                (Value::Array(arr), Value::Int(i)) => arr.into_iter().nth(i as usize)
-                    .ok_or(RuntimeError::IndexOutOfBounds(i as usize, 0))?,
+                (Value::Array(arr), Value::Int(i)) => {
+                    let len = arr.len();
+                    arr.into_iter().nth(i as usize)
+                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, len))?
+                }
                 (Value::Array(arr), Value::Range { start, stop, step }) => {
                     let start = start.unwrap_or(0) as usize;
                     let stop = stop.unwrap_or(arr.len() as i64) as usize;
