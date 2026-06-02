@@ -105,6 +105,7 @@ pub struct Interpreter {
     qubit_map: HashMap<String, Vec<usize>>,
     num_qubits: usize,
     gate_cache: HashMap<(String, Vec<u64>), ResolvedGate>,
+    call_depth: usize
 }
 
 impl Interpreter {
@@ -121,6 +122,7 @@ impl Interpreter {
             qubit_map: HashMap::new(),
             num_qubits: 0,
             gate_cache: HashMap::new(),
+            call_depth: 0
         }
     }
 
@@ -1155,7 +1157,7 @@ impl Interpreter {
 
         let expected_param_count = func.get_params().len();
         if param_values.len() != expected_param_count {
-            return Err(RuntimeError::WrongParamCount(name.clone(), expected_param_count, param_values.len()));
+            return Err(RuntimeError::InvalidArgCount(expected_param_count, param_values.len()));
         }
 
         if let Function::UserDefined { .. } = &func {

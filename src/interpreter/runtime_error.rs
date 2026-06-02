@@ -18,5 +18,4 @@ pub enum RuntimeError {
     ParseError(ParseError),
     InvalidQubitAccess(String),
     NoStateVector,
-    WrongParamCount(String, usize, usize),
 }
