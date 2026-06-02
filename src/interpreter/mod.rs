@@ -175,7 +175,7 @@ impl Interpreter {
 
     fn define(&mut self, name: String, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(&name) {
-            return Err(RuntimeError::ConstAssignment(name.to_string()))
+            return Err(RuntimeError::ConstReassignment(name.to_string()))
         };
 
         self.scopes.last_mut().unwrap().insert(name, value);
@@ -184,7 +184,7 @@ impl Interpreter {
 
     fn assign(&mut self, name: &str, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(name) {
-            return Err(RuntimeError::ConstAssignment(name.to_string()));
+            return Err(RuntimeError::ConstReassignment(name.to_string()));
         }
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {

@@ -8,7 +8,7 @@ pub enum RuntimeError {
     NullPointer,
     InvalidSize,
     UnsupportedType,
-    ConstAssignment(String),
+    ConstReassignment(String),
     IndexOutOfBounds(usize, usize),
     InvalidArgCount(usize, usize),
     UndefinedFunction(String),
