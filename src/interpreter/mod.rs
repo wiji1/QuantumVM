@@ -176,8 +176,10 @@ impl Interpreter {
 
     fn define(&mut self, name: String, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(&name) {
-            return Err(RuntimeError::ConstReassignment(name.to_string()))
-        };
+            if self.scopes.last().unwrap().contains_key(&name) {
+                return Err(RuntimeError::ConstReassignment(name));
+            }
+        }
 
         self.scopes.last_mut().unwrap().insert(name, value);
         Ok(ControlFlow::None)
