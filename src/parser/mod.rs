@@ -496,9 +496,8 @@ impl Parser {
     }
 
     fn parse_const_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
         let classical_type = self.parse_classical_type()?;
-
-        let size = self.extract_index_operand()?;
 
         let name = extract_token!(
             self,
