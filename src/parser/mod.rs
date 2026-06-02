@@ -356,9 +356,17 @@ impl Parser {
             TokenType::Keyword(Keyword::QReg) => self.parse_qreg(),
             TokenType::Keyword(Keyword::Extern) => self.parse_extern(),
             TokenType::Keyword(Keyword::Pragma) => self.parse_pragma(),
+            TokenType::Keyword(Keyword::Delay) => self.parse_delay(),
+            TokenType::Keyword(Keyword::Cal) => self.parse_cal_block(false),
+            TokenType::Keyword(Keyword::DefCal) => self.parse_cal_block(true),
             TokenType::Keyword(Keyword::Input) | TokenType::Keyword(Keyword::Output) => self.parse_io_decl(),
             TokenType::Keyword(Keyword::Inv) | TokenType::Keyword(Keyword::Pow) |
             TokenType::Keyword(Keyword::Ctrl) | TokenType::Keyword(Keyword::NegCtrl) => self.parse_gate_call(),
+            TokenType::Keyword(Keyword::Box) => {
+                self.advance();
+                let stmts = self.parse_block()?;
+                Ok(Stmt::Block(stmts))
+            }
             TokenType::Symbol(Symbol::LBrace) => {
                 let stmts = self.parse_block()?;
                 Ok(Stmt::Block(stmts))
@@ -444,6 +452,14 @@ impl Parser {
                 let inner = self.parse_classical_type()?;
                 expect_token!(self, TokenType::Symbol(Symbol::RBracket));
                 Ok(ClassicalType::Complex(Some(Box::new(inner))))
+            }
+            TypeDefinition::Duration => {
+                let _ = self.extract_index_operand()?;
+                Ok(ClassicalType::Duration(None))
+            }
+            TypeDefinition::Stretch => {
+                let _ = self.extract_index_operand()?;
+                Ok(ClassicalType::Stretch(None))
             }
             _ => {
                 let size = self.extract_index_operand()?;
@@ -896,7 +912,7 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::LBracket));
 
         let classical_type = self.parse_classical_type()?;
-        
+
         expect_token!(self, TokenType::Symbol(Symbol::Comma));
 
         let expressions = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
@@ -1086,7 +1102,7 @@ impl Parser {
         };
 
         self.advance();
-        
+
         let classical_type = self.parse_classical_type()?;
 
         let name = extract_token!(
@@ -1284,5 +1300,38 @@ impl Parser {
             self.advance();
         }
         Ok(Stmt::Pragma)
+    }
+
+    fn parse_delay(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        let _ = self.extract_index_operand()?;
+        if !self.at(TokenType::Symbol(Symbol::Semicolon)) {
+            self.parse_gate_operand_list(TokenType::Symbol(Symbol::Semicolon))?;
+        }
+        expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
+
+        Ok(Stmt::NoOp)
+    }
+
+    fn parse_cal_block(&mut self, find_brace_first: bool) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        if find_brace_first {
+            while !self.at(TokenType::Symbol(Symbol::LBrace)) && !self.is_at_end() { self.advance(); }
+        }
+
+        expect_token!(self, TokenType::Symbol(Symbol::LBrace));
+
+        let mut depth = 1;
+        while depth > 0 && !self.is_at_end() {
+            match self.peek().kind {
+                TokenType::Symbol(Symbol::LBrace) => { depth += 1; }
+                TokenType::Symbol(Symbol::RBrace) => { depth -= 1; }
+                _ => {}
+            }
+            self.advance();
+        }
+
+        Ok(Stmt::NoOp)
     }
 }

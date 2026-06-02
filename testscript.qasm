@@ -1,5 +1,8 @@
 OPENQASM 3.0;
-output complex[float[64]] z;
-output complex[float[64]] w;
-z = 1.0 + 2.5im;
-w = 0.0 + 1.0im;
+include "stdgates.inc";
+qubit[3] q;
+output bit[3] c;
+x q[0];
+x q[1];
+ctrl(2) @ x q[0], q[1], q[2];
+c = measure q;

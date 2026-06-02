@@ -35,7 +35,11 @@ pub enum Keyword {
     CReg,
     QReg,
     Extern,
-    Pragma
+    Pragma,
+    Box,
+    Delay,
+    Cal,
+    DefCal
 }
 
 impl TokenTrait for Keyword {
@@ -142,6 +146,18 @@ impl TokenTrait for Keyword {
         }
         if let Some(len) = match_keyword(input, "pragma") {
             return Some((Self::Pragma, len));
+        }
+        if let Some(len) = match_keyword(input, "box") {
+            return Some((Self::Box, len));
+        }
+        if let Some(len) = match_keyword(input, "delay") {
+            return Some((Self::Delay, len));
+        }
+        if let Some(len) = match_keyword(input, "cal") {
+            return Some((Self::Cal, len));
+        }
+        if let Some(len) = match_keyword(input, "defcal") {
+            return Some((Self::DefCal, len));
         }
         None
     }

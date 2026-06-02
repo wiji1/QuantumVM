@@ -95,6 +95,7 @@ pub enum ClassicalType {
     Angle(Option<Expr>),
     Bool(Option<Expr>),
     Duration(Option<Expr>),
+    Stretch(Option<Expr>),
     Complex(Option<Box<ClassicalType>>),
 }
 
@@ -116,6 +117,8 @@ impl ClassicalType {
             ClassicalType::Bool(_) => Ok(Value::Bool(false)),
             ClassicalType::Angle(_) => Ok(Value::Float(0.0)),
             ClassicalType::Complex(_) => Ok(Value::Complex(0.0, 0.0)),
+            ClassicalType::Duration(_) => Ok(Value::Int(0)),
+            ClassicalType::Stretch(_) => Ok(Value::Int(0)),
             _ =>  Err(RuntimeError::UnsupportedType),
         }
     }
@@ -128,7 +131,8 @@ impl ClassicalType {
             | ClassicalType::Float(s)
             | ClassicalType::Angle(s)
             | ClassicalType::Bool(s)
-            | ClassicalType::Duration(s) => s.clone(),
+            | ClassicalType::Duration(s)
+            | ClassicalType::Stretch(s) => s.clone(),
 
             ClassicalType::Complex(_) => None,
         }

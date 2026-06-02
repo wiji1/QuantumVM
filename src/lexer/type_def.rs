@@ -6,7 +6,7 @@ use crate::parser::supporting_types::ClassicalType;
 
 #[derive(Debug, Clone)]
 pub enum TypeDefinition {
-    Qubit, //TODO: Move this to new enum called QuantumTypeDefinition
+    Qubit,
     Bool,
     Bit,
     Int,
@@ -17,6 +17,7 @@ pub enum TypeDefinition {
     Duration,
     Array,
     Void,
+    Stretch
 }
 
 //TODO: Make this compiler-enforced
@@ -54,6 +55,9 @@ impl TokenTrait for TypeDefinition {
         }
         if let Some(len) = match_keyword(input, "void") {
             return Some((Self::Void, len));
+        }
+        if let Some(len) = match_keyword(input, "stretch") {
+            return Some((Self::Stretch, len));
         }
         None
     }

@@ -32,5 +32,6 @@ pub enum Stmt {
     Block(Vec<Stmt>),
     Include(String),
     GPhase(Option<Vec<Expr>>),
-    Pragma
+    Pragma,
+    NoOp
 }

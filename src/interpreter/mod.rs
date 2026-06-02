@@ -104,9 +104,6 @@ pub struct Interpreter {
     state_vector: Option<StateVector>,
     qubit_map: HashMap<String, Vec<usize>>,
     num_qubits: usize,
-    /// Cache for gate matrices by (name, parameters)
-    /// Caches both parameter-free gates (h, x, cx) and parameterized gates (rz(pi/4), rx(theta))
-    /// Parameters are hashed as bits to handle floating point comparisons
     gate_cache: HashMap<(String, Vec<u64>), ResolvedGate>,
 }
 
@@ -298,6 +295,7 @@ impl Interpreter {
                 self.functions.insert(name.clone(), Function::Extern);
                 Ok(ControlFlow::None)
             }
+            Stmt::NoOp => Ok(ControlFlow::None)
         }
     }
 
@@ -385,7 +383,7 @@ impl Interpreter {
             Expr::Bool(b) => { Ok(Value::Bool(*b)) }
             Expr::Array(a) => { self.evaluate_array(a) }
             Expr::Imaginary(f) => { Ok(Value::Complex(0.0, *f)) }
-            Expr::Timing(_) => { todo!() }
+            Expr::Timing(_) => { Ok(Value::Int(0)) }
             Expr::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
             Expr::Ident(name) => {
                 if let Some(val) = self.lookup(name) { Ok(val.clone()) }
@@ -1281,8 +1279,30 @@ impl Interpreter {
                     };
                     gate.apply_pow(n)
                 }
-                GateModifier::Ctrl(_) => gate.apply_ctrl(),
-                GateModifier::NegCtrl(_) => gate.apply_neg_ctrl(),
+                GateModifier::Ctrl(count) => {
+                    let n = match count {
+                        Some(expr) => match self.evaluate_expression(expr)? {
+                            Value::Int(i) => i as usize,
+                            Value::Float(f) => f as usize,
+                            _ => return Err(RuntimeError::TypeMismatch("ctrl count must be int".to_string())),
+                        },
+                        None => 1,
+                    };
+                    for _ in 0..n { gate = gate.apply_ctrl(); }
+                    gate
+                }
+                GateModifier::NegCtrl(count) => {
+                    let n = match count {
+                        Some(expr) => match self.evaluate_expression(expr)? {
+                            Value::Int(i) => i as usize,
+                            Value::Float(f) => f as usize,
+                            _ => return Err(RuntimeError::TypeMismatch("negctrl count must be int".to_string())),
+                        },
+                        None => 1,
+                    };
+                    for _ in 0..n { gate = gate.apply_neg_ctrl(); }
+                    gate
+                }
             };
         }
         Ok(gate)
