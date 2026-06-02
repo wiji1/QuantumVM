@@ -910,7 +910,7 @@ impl Interpreter {
         }
 
         match func {
-            Function::BuiltIn(f) => f(evaluated_args),
+            Function::BuiltIn(f) => f.call(evaluated_args),
             Function::UserDefined { params, return_type, body } => {
                 if args.len() != params.len() {
                     return Err(RuntimeError::InvalidArgCount(params.len(), args.len()));
@@ -1152,6 +1152,11 @@ impl Interpreter {
         let func = self.functions.get(name)
             .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
             .clone();
+
+        let expected_param_count = func.get_params().len();
+        if param_values.len() != expected_param_count {
+            return Err(RuntimeError::WrongParamCount(name.clone(), expected_param_count, param_values.len()));
+        }
 
         if let Function::UserDefined { .. } = &func {
             let mut args: Vec<Expr> = params.clone();

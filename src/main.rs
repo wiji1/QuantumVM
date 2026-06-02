@@ -26,7 +26,7 @@ fn main() {
             
             let lexer_output = lexer.tokens;
             let mut parser = Parser::new(lexer_output);
-            let program = parser.start().expect("Program Panicked!");
+            let program = parser.start().expect("Error");
             
             let mut interpreter = Interpreter::new(program, script_dir);
             //TODO: Set input values

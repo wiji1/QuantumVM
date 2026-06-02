@@ -3,7 +3,7 @@ use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{ClassicalType, Param};
+use crate::parser::supporting_types::{ClassicalType, Param, ParamType};
 use std::collections::HashMap;
 
 macro_rules! math_builtin {
@@ -93,30 +93,97 @@ fn builtin_sizeof(args: Vec<Value>) -> Result<Value, RuntimeError> {
 }
 
 #[derive(Clone)]
+pub enum BuiltInFunction {
+    Sin, Cos, Tan, Asin, Acos, Atan,
+    Sqrt, Exp, Ln, Floor, Ceil,
+    Pow, Mod, Sizeof,
+}
+
+impl BuiltInFunction {
+    pub fn call(&self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        match self {
+            BuiltInFunction::Sin => builtin_sin(args),
+            BuiltInFunction::Cos => builtin_cos(args),
+            BuiltInFunction::Tan => builtin_tan(args),
+            BuiltInFunction::Asin => builtin_asin(args),
+            BuiltInFunction::Acos => builtin_acos(args),
+            BuiltInFunction::Atan => builtin_atan(args),
+            BuiltInFunction::Sqrt => builtin_sqrt(args),
+            BuiltInFunction::Exp => builtin_exp(args),
+            BuiltInFunction::Ln => builtin_ln(args),
+            BuiltInFunction::Floor => builtin_floor(args),
+            BuiltInFunction::Ceil => builtin_ceil(args),
+            BuiltInFunction::Pow => builtin_pow(args),
+            BuiltInFunction::Mod => builtin_mod(args),
+            BuiltInFunction::Sizeof => builtin_sizeof(args),
+        }
+    }
+
+    pub fn get_params(&self) -> Vec<Param> {
+        match self {
+            BuiltInFunction::Sin | BuiltInFunction::Cos | BuiltInFunction::Tan
+            | BuiltInFunction::Asin | BuiltInFunction::Acos | BuiltInFunction::Atan
+            | BuiltInFunction::Sqrt | BuiltInFunction::Exp | BuiltInFunction::Ln
+            | BuiltInFunction::Floor | BuiltInFunction::Ceil => vec![
+                Param { ty: ParamType::Unspecified, name: "x".to_string() }
+            ],
+            BuiltInFunction::Pow => vec![
+                Param { ty: ParamType::Unspecified, name: "base".to_string() },
+                Param { ty: ParamType::Unspecified, name: "exponent".to_string() },
+            ],
+            BuiltInFunction::Mod => vec![
+                Param { ty: ParamType::Unspecified, name: "a".to_string() },
+                Param { ty: ParamType::Unspecified, name: "b".to_string() },
+            ],
+            BuiltInFunction::Sizeof => vec![
+                Param { ty: ParamType::Unspecified, name: "array".to_string() },
+            ],
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum Function {
-    BuiltIn(fn(Vec<Value>) -> Result<Value, RuntimeError>),
+    BuiltIn(BuiltInFunction),
     BuiltInGate(BuiltInGate),
     UserDefined { params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
     Gate { params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
     Extern
 }
 
+impl Function {
+    pub fn get_params(&self) -> Vec<Param> {
+        match self {
+            Function::BuiltIn(func) => func.get_params(),
+            Function::BuiltInGate(gate) => gate.get_params(),
+            Function::UserDefined { params, .. } => params.clone(),
+            Function::Gate { params, .. } => {
+                params.iter().map(|name| Param {
+                    ty: ParamType::Scalar(ClassicalType::Angle(None)),
+                    name: name.clone(),
+                }).collect()
+            },
+            Function::Extern => vec![],
+        }
+    }
+}
+
 pub fn get_default_functions() -> HashMap<String, Function> {
     let mut functions: HashMap<String, Function> = HashMap::new();
-    functions.insert("sin".to_string(), Function::BuiltIn(builtin_sin));
-    functions.insert("cos".to_string(), Function::BuiltIn(builtin_cos));
-    functions.insert("tan".to_string(), Function::BuiltIn(builtin_tan));
-    functions.insert("arcsin".to_string(), Function::BuiltIn(builtin_asin));
-    functions.insert("arccos".to_string(), Function::BuiltIn(builtin_acos));
-    functions.insert("arctan".to_string(), Function::BuiltIn(builtin_atan));
-    functions.insert("sqrt".to_string(), Function::BuiltIn(builtin_sqrt));
-    functions.insert("exp".to_string(), Function::BuiltIn(builtin_exp));
-    functions.insert("ln".to_string(), Function::BuiltIn(builtin_ln));
-    functions.insert("floor".to_string(), Function::BuiltIn(builtin_floor));
-    functions.insert("ceil".to_string(), Function::BuiltIn(builtin_ceil));
-    functions.insert("pow".to_string(), Function::BuiltIn(builtin_pow));
-    functions.insert("mod".to_string(), Function::BuiltIn(builtin_mod));
-    functions.insert("sizeof".to_string(), Function::BuiltIn(builtin_sizeof));
+    functions.insert("sin".to_string(), Function::BuiltIn(BuiltInFunction::Sin));
+    functions.insert("cos".to_string(), Function::BuiltIn(BuiltInFunction::Cos));
+    functions.insert("tan".to_string(), Function::BuiltIn(BuiltInFunction::Tan));
+    functions.insert("arcsin".to_string(), Function::BuiltIn(BuiltInFunction::Asin));
+    functions.insert("arccos".to_string(), Function::BuiltIn(BuiltInFunction::Acos));
+    functions.insert("arctan".to_string(), Function::BuiltIn(BuiltInFunction::Atan));
+    functions.insert("sqrt".to_string(), Function::BuiltIn(BuiltInFunction::Sqrt));
+    functions.insert("exp".to_string(), Function::BuiltIn(BuiltInFunction::Exp));
+    functions.insert("ln".to_string(), Function::BuiltIn(BuiltInFunction::Ln));
+    functions.insert("floor".to_string(), Function::BuiltIn(BuiltInFunction::Floor));
+    functions.insert("ceil".to_string(), Function::BuiltIn(BuiltInFunction::Ceil));
+    functions.insert("pow".to_string(), Function::BuiltIn(BuiltInFunction::Pow));
+    functions.insert("mod".to_string(), Function::BuiltIn(BuiltInFunction::Mod));
+    functions.insert("sizeof".to_string(), Function::BuiltIn(BuiltInFunction::Sizeof));
 
     functions.insert("U".to_string(),  Function::BuiltInGate(BuiltInGate::U));
     functions.insert("CX".to_string(), Function::BuiltInGate(BuiltInGate::Cx));
@@ -135,6 +202,17 @@ impl BuiltInGate {
         match self {
             BuiltInGate::U  => Ok(ResolvedGate::SingleQubit(gate_u(params[0], params[1], params[2]))),
             BuiltInGate::Cx => Ok(ResolvedGate::TwoQubit(gate_cx())),
+        }
+    }
+
+    pub fn get_params(&self) -> Vec<Param> {
+        match self {
+            BuiltInGate::U => vec![
+                Param { ty: ParamType::Scalar(ClassicalType::Angle(None)), name: "theta".to_string() },
+                Param { ty: ParamType::Scalar(ClassicalType::Angle(None)), name: "phi".to_string() },
+                Param { ty: ParamType::Scalar(ClassicalType::Angle(None)), name: "lambda".to_string() },
+            ],
+            BuiltInGate::Cx => vec![],
         }
     }
 }

@@ -52,6 +52,7 @@ pub enum ParamType {
         element_ty: ClassicalType,
         dimensions: ArrayDimensions,
     },
+    Unspecified
 }
 
 #[derive(Debug, Clone)]
