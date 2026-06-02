@@ -1,14 +1,13 @@
 use crate::parser::expression::Expr;
-use crate::parser::supporting_types::{AssignOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, Param, SwitchCase};
-use crate::lexer::type_def::TypeDefinition;
+use crate::parser::supporting_types::*;
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
     QuantumDecl { name: String, size: Option<Expr> },
-    ClassicalDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Option<Expr> },
-    ArrayDecl { ty: TypeDefinition, type_size: Option<Expr>, name: String, size: Vec<Expr>, init: Option<Expr> },
-    ConstDecl { ty: TypeDefinition, name: String, size: Option<Expr>, init: Expr },
-    IoDecl { direction: IoDirection, ty: TypeDefinition, size: Option<Expr>, name: String },
+    ClassicalDecl { ty: ClassicalType, name: String, init: Option<Expr> },
+    ArrayDecl { ty: ClassicalType, name: String, size: Vec<Expr>, init: Option<Expr> },
+    ConstDecl { ty: ClassicalType, name: String, init: Expr },
+    IoDecl { direction: IoDirection, ty: ClassicalType, name: String },
 
     GateCall { name: String, modifiers: Vec<GateModifier>, params: Vec<Expr>, qubits: Vec<GateOperand> },
     ExpressionStatement(Expr),
@@ -23,7 +22,7 @@ pub enum Stmt {
     Break,
     Return(Option<Expr>),
 
-    Def { name: String, params: Vec<Param>, return_type: Option<(TypeDefinition, Option<Expr>)>, body: Vec<Stmt> },
+    Def { name: String, params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
     GateDef { name: String, params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
 
     Assign { target: IndexedIdent, op: AssignOp, value: Expr },

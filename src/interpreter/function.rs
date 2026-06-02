@@ -1,13 +1,10 @@
-use std::collections::HashMap;
 use crate::interpreter::quantum::gates::*;
 use crate::interpreter::quantum::resolved_gate::ResolvedGate;
-use crate::interpreter::quantum::statevector::StateVector;
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
-use crate::lexer::type_def::TypeDefinition;
-use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::Param;
+use crate::parser::supporting_types::{ClassicalType, Param};
+use std::collections::HashMap;
 
 macro_rules! math_builtin {
     ($name:ident, $method:ident) => {
@@ -99,7 +96,7 @@ fn builtin_sizeof(args: Vec<Value>) -> Result<Value, RuntimeError> {
 pub enum Function {
     BuiltIn(fn(Vec<Value>) -> Result<Value, RuntimeError>),
     BuiltInGate(BuiltInGate),
-    UserDefined { params: Vec<Param>, return_type: Option<(TypeDefinition, Option<Expr>)>, body: Vec<Stmt> },
+    UserDefined { params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
     Gate { params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
     Extern
 }

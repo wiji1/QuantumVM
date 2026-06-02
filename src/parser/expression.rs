@@ -19,8 +19,6 @@ pub enum Expr {
     Unary { op: UnaryOp, expr: Box<Expr> },
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
 
-    Index { expr: Box<Expr>, index: Box<Expr> },
-
     Call { name: String, args: Vec<Expr> },
     Cast { ty: Box<ClassicalType>, expr: Box<Expr> },
     Range { start: Option<Box<Expr>>, stop: Option<Box<Expr>>, step: Option<Box<Expr>> },

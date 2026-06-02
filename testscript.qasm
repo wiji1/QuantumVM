@@ -1,7 +1,5 @@
 OPENQASM 3.0;
-output int total = 0;
-for uint i in [0:3] {
-    for uint j in [0:3] {
-        total += 1;
-    }
-}
+output complex[float[64]] z;
+output complex[float[64]] w;
+z = 1.0 + 2.5im;
+w = 0.0 + 1.0im;

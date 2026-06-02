@@ -12,7 +12,7 @@ use crate::lexer::{Span, Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
-use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, Param, ParamType, SwitchCase, UnaryOp};
+use crate::parser::supporting_types::{ArrayDimensions, AssignOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, Param, ParamType, SwitchCase, UnaryOp};
 
 fn matches_token_type(actual: &TokenType, expected: &TokenType) -> bool {
     match (actual, expected) {
@@ -431,14 +431,38 @@ impl Parser {
         Ok(Stmt::QuantumDecl { name, size })
     }
 
-    fn parse_classic_decl(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_classical_type(&mut self) -> Result<ClassicalType, ParseError> {
         let type_def = extract_token!(
             self,
             TokenType::TypeDef(t) => t,
-            TokenType::TypeDef(TypeDefinition::Bit)
+            TokenType::TypeDef(TypeDefinition::Int)
         );
 
-        let size = self.extract_index_operand()?;
+        match type_def {
+            TypeDefinition::Complex => {
+                expect_token!(self, TokenType::Symbol(Symbol::LBracket));
+                let inner = self.parse_classical_type()?;
+                expect_token!(self, TokenType::Symbol(Symbol::RBracket));
+                Ok(ClassicalType::Complex(Some(Box::new(inner))))
+            }
+            _ => {
+                let size = self.extract_index_operand()?;
+                let classical_type = type_def.get_classical_type(size);
+
+                match classical_type {
+                    Some(classical_type) => Ok(classical_type),
+                    None => Err(ParseError::TypeError {
+                        message: format!("cannot convert type: {:?} to classical type", type_def),
+                        span: self.peek().span.clone(),
+                    })
+                }
+
+            }
+        }
+    }
+
+    fn parse_classic_decl(&mut self) -> Result<Stmt, ParseError> {
+        let classical_type = self.parse_classical_type()?;
 
         let name = extract_token!(
             self,
@@ -449,22 +473,14 @@ impl Parser {
         let init = if self.at(TokenType::Symbol(Symbol::Equals)) {
             self.advance();
             Some(self.parse_expr(0)?)
-        } else {
-            None
-        };
+        } else { None };
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
-        Ok(Stmt::ClassicalDecl { ty: type_def, name, size, init })
+        Ok(Stmt::ClassicalDecl { ty: classical_type, name, init })
     }
 
     fn parse_const_decl(&mut self) -> Result<Stmt, ParseError> {
-        expect_token!(self, TokenType::Keyword(Keyword::Const));
-
-        let type_def = extract_token!(
-            self,
-            TokenType::TypeDef(t) => t,
-            TokenType::TypeDef(TypeDefinition::Bit)
-        );
+        let classical_type = self.parse_classical_type()?;
 
         let size = self.extract_index_operand()?;
 
@@ -479,7 +495,7 @@ impl Parser {
         let init = self.parse_expr(0)?;
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
-        Ok(Stmt::ConstDecl { ty: type_def, name, size, init })
+        Ok(Stmt::ConstDecl { ty: classical_type, name, init })
     }
 
     fn parse_gate_def(&mut self) -> Result<Stmt, ParseError> {
@@ -573,6 +589,11 @@ impl Parser {
     }
 
     fn parse_gate_operand(&mut self) -> Result<GateOperand, ParseError> {
+        if let TokenType::Literal(Literal::HardwareQubit(n)) = self.peek().kind.clone() {
+            self.advance();
+            return Ok(GateOperand::HardwareQubit(n as u32));
+        }
+
         let name = match self.peek().kind.clone() {
             TokenType::Identifier(Identifier::Identifier(s)) => {
                 self.advance();
@@ -874,14 +895,8 @@ impl Parser {
         expect_token!(self, TokenType::TypeDef(TypeDefinition::Array));
         expect_token!(self, TokenType::Symbol(Symbol::LBracket));
 
-        let extracted_type = extract_token!(
-            self,
-            TokenType::TypeDef(t) => t,
-            TokenType::TypeDef(TypeDefinition::Int)
-        );
-
-        let type_size = self.extract_index_operand()?;
-
+        let classical_type = self.parse_classical_type()?;
+        
         expect_token!(self, TokenType::Symbol(Symbol::Comma));
 
         let expressions = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
@@ -897,15 +912,12 @@ impl Parser {
         let init = if self.at(TokenType::Symbol(Symbol::Equals)) {
             self.advance();
             Some(self.parse_expr(0)?)
-        } else {
-            None
-        };
+        } else { None };
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         let stmt = Stmt::ArrayDecl {
-            ty: extracted_type,
-            type_size: type_size,
+            ty: classical_type,
             name: name,
             size: expressions,
             init: init,
@@ -955,12 +967,8 @@ impl Parser {
 
         let return_type = if self.at(TokenType::CompoundSymbol(CompoundSymbol::Arrow)) {
             self.advance();
-            let ty = extract_token!(self,TokenType::TypeDef(t) => t,TokenType::TypeDef(TypeDefinition::Int));
-            let size = self.extract_index_operand()?;
-            Some((ty, size))
-        } else {
-            None
-        };
+            Some(self.parse_classical_type()?)
+        } else { None };
 
         let body = self.parse_block()?;
 
@@ -980,15 +988,15 @@ impl Parser {
                 Ok(Param { ty: ParamType::Qubit(size), name })
             }
 
-            TokenType::TypeDef(ty) => {
-                self.advance();
-                let size = self.extract_index_operand()?;
+            TokenType::TypeDef(_) => {
+                let classical_type = self.parse_classical_type()?;
+
                 let name = extract_token!(
                     self,
                     TokenType::Identifier(Identifier::Identifier(s)) => s,
                     TokenType::Identifier(Identifier::Identifier(String::new()))
                 );
-                Ok(Param { ty: ParamType::Scalar(ty, size), name })
+                Ok(Param { ty: ParamType::Scalar(classical_type), name })
             }
 
             TokenType::Keyword(Keyword::ReadOnly) | TokenType::Keyword(Keyword::Mutable) => {
@@ -996,13 +1004,7 @@ impl Parser {
                 self.advance();
                 expect_token!(self, TokenType::TypeDef(TypeDefinition::Array));
                 expect_token!(self, TokenType::Symbol(Symbol::LBracket));
-                let element_ty = extract_token!(
-                    self,
-                    TokenType::TypeDef(t) => t,
-                    TokenType::TypeDef(TypeDefinition::Int)
-                );
-                let element_size = self.extract_index_operand()?;
-                expect_token!(self, TokenType::Symbol(Symbol::Comma));
+                let element_ty = self.parse_classical_type()?;
 
                 let dimensions = if self.at(TokenType::Keyword(Keyword::Dim)) {
                     self.advance();
@@ -1023,7 +1025,7 @@ impl Parser {
                 );
 
                 Ok(Param {
-                    ty: ParamType::ArrayRef { mutable, element_ty, element_size, dimensions },
+                    ty: ParamType::ArrayRef { mutable, element_ty, dimensions },
                     name,
                 })
             }
@@ -1084,14 +1086,9 @@ impl Parser {
         };
 
         self.advance();
+        
+        let classical_type = self.parse_classical_type()?;
 
-        let ty = extract_token!(
-            self,
-            TokenType::TypeDef(t) => t,
-            TokenType::TypeDef(TypeDefinition::Bit)
-        );
-
-        let size = self.extract_index_operand()?;
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1100,7 +1097,7 @@ impl Parser {
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
-        Ok(Stmt::IoDecl { direction, ty, size, name })
+        Ok(Stmt::IoDecl { direction, ty: classical_type, name })
     }
 
     fn parse_include(&mut self) -> Result<Stmt, ParseError> {
@@ -1247,9 +1244,8 @@ impl Parser {
         let size = self.extract_index_operand()?;
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         Ok(Stmt::ClassicalDecl {
-            ty: TypeDefinition::Bit,
+            ty: ClassicalType::Bit(size),
             name,
-            size,
             init: None
         })
     }

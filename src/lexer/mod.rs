@@ -4,12 +4,12 @@ pub mod type_def;
 pub mod identifier;
 pub mod literal;
 
-use symbol::{CompoundSymbol, Symbol};
-use keyword::Keyword;
-use type_def::TypeDefinition;
+use crate::lexer::symbol::CompoundAssignment;
 use identifier::Identifier;
+use keyword::Keyword;
 use literal::Literal;
-use crate::lexer::symbol::{CompoundAssignment, BLOCK_COMMENT};
+use symbol::{CompoundSymbol, Symbol};
+use type_def::TypeDefinition;
 
 pub(crate) trait TokenTrait: Sized {
     fn try_parse(input: &str) -> Option<(Self, usize)>;
@@ -95,7 +95,7 @@ impl Lexer  {
             let mut span = {
                 Span { line: self.current_line, col: pos, len: 0 }
             };
-
+            
             if let Some((token, advance)) = CompoundAssignment::try_parse(&line[pos..]) {
                 span.len = advance;
 

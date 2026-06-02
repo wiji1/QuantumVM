@@ -28,7 +28,14 @@ macro_rules! numeric_op {
             (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a $op b)),
             (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 $op b)),
             (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a $op b as f64)),
-            _ => Err(RuntimeError::UnsupportedOperation($expr.to_string()))
+            (Value::Complex(re1, im1), Value::Complex(re2, im2)) => {
+                Ok(Value::Complex(re1 $op re2, im1 $op im2))
+            },
+            (Value::Float(a), Value::Complex(re, im)) => Ok(Value::Complex(a $op re, im)),
+            (Value::Complex(re, im), Value::Float(b)) => Ok(Value::Complex(re $op b, im)),
+            (Value::Int(a), Value::Complex(re, im)) => Ok(Value::Complex(a as f64 $op re, im)),
+            (Value::Complex(re, im), Value::Int(b)) => Ok(Value::Complex(re $op b as f64, im)),
+            _ => Err(RuntimeError::UnsupportedOperation($expr.to_string())),
         }
     };
 }
@@ -306,11 +313,11 @@ impl Interpreter {
     }
 
     fn interpret_classical_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ClassicalDecl { ty, name, size, init } = stmt else {
+        let Stmt::ClassicalDecl { ty, name, init } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
 
-        let default_value = ty.get_default_value(size.clone())?;
+        let default_value = ty.get_default_value(ty.get_size())?;
 
         let init_value = match init {
             Some(expr) => self.evaluate_expression(expr)?,
@@ -323,7 +330,7 @@ impl Interpreter {
     }
 
     fn interpret_array_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ArrayDecl { ty, type_size, name, size, init} = stmt else {
+        let Stmt::ArrayDecl { ty, name, size, init} = stmt else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -341,25 +348,25 @@ impl Interpreter {
 
         let value = match init {
             Some(expr) => self.evaluate_expression(expr)?,
-            None => self.default_array(ty, type_size, &dimensions)?
+            None => self.default_array(ty, &dimensions)?
         };
 
         self.define(name.clone(), value)?;
         Ok(ControlFlow::None)
     }
 
-    fn default_array(&self, ty: &TypeDefinition, type_size: &Option<Expr>, dimensions: &[i64]) -> Result<Value, RuntimeError> {
-        if dimensions.is_empty() { return ty.get_default_value(type_size.clone()); }
+    fn default_array(&self, ty: &ClassicalType, dimensions: &[i64]) -> Result<Value, RuntimeError> {
+        if dimensions.is_empty() { return ty.get_default_value(ty.get_size()); }
 
         let size = dimensions[0] as usize;
         let inner: Result<Vec<Value>, _> = (0..size)
-            .map(|_| self.default_array(ty, type_size, &dimensions[1..]))
+            .map(|_| self.default_array(ty, &dimensions[1..]))
             .collect();
         Ok(Value::Array(inner?))
     }
 
     fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ConstDecl { ty, name, size, init } = stmt else {
+        let Stmt::ConstDecl { ty, name, init } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -377,7 +384,7 @@ impl Interpreter {
             Expr::Float(f) => { Ok(Value::Float(*f)) }
             Expr::Bool(b) => { Ok(Value::Bool(*b)) }
             Expr::Array(a) => { self.evaluate_array(a) }
-            Expr::Imaginary(i) => { todo!() }
+            Expr::Imaginary(f) => { Ok(Value::Complex(0.0, *f)) }
             Expr::Timing(_) => { todo!() }
             Expr::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
             Expr::Ident(name) => {
@@ -390,7 +397,6 @@ impl Interpreter {
             Expr::Measure(op) => { self.evaluate_measure(op) }
             Expr::Unary { .. } => { self.evaluate_unary(expr) }
             Expr::Binary { .. } => { self.evaluate_binary(expr) }
-            Expr::Index { .. } => { todo!() }
             Expr::Call { name, args } => { self.call_function(name, args) }
             Expr::Cast { ty, expr } => {
                 let value = self.evaluate_expression(expr)?;
@@ -989,12 +995,18 @@ impl Interpreter {
                     _ => Err(RuntimeError::TypeMismatch("cannot cast to bit".to_string())),
                 }
             },
+            ClassicalType::Complex(_) => match value {
+                Value::Complex(re, im) => Ok(Value::Complex(re, im)),
+                Value::Float(f) => Ok(Value::Complex(f, 0.0)),
+                Value::Int(i) => Ok(Value::Complex(i as f64, 0.0)),
+                _ => Err(RuntimeError::TypeMismatch("cannot cast to complex".to_string())),
+            },
             _ => Err(RuntimeError::UnsupportedType),
         }
     }
 
     fn interpret_io_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::IoDecl { direction, ty, size, name } = stmt else {
+        let Stmt::IoDecl { direction, ty, name } = stmt else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -1010,8 +1022,8 @@ impl Interpreter {
                 }
             }
             IoDirection::Output => {
-                self.define(name.to_string(), ty.get_default_value(size.clone())?)?;
-                self.outputs.insert(name.to_string(), ty.get_default_value(size.clone())?);
+                self.define(name.to_string(), ty.get_default_value(ty.get_size())?)?;
+                self.outputs.insert(name.to_string(), ty.get_default_value(ty.get_size())?);
 
                 Ok(ControlFlow::None)
             }
@@ -1109,7 +1121,10 @@ impl Interpreter {
                     Ok(vec![qubit])
                 }
             }
-            GateOperand::HardwareQubit(i) => Ok(vec![*i as usize]),
+            GateOperand::HardwareQubit(i) => {
+                self.ensure_hardware_qubit(*i as usize);
+                Ok(vec![*i as usize])
+            },
         }
     }
 
@@ -1341,6 +1356,14 @@ impl Interpreter {
                 self.define(name.clone(), other)?;
                 Ok(ControlFlow::None)
             }
+        }
+    }
+
+    fn ensure_hardware_qubit(&mut self, index: usize) {
+        if index >= self.num_qubits {
+            let needed = index + 1 - self.num_qubits;
+            let name = format!("$hw_{}", index);
+            self.allocate_qubits(&name, needed);
         }
     }
 }

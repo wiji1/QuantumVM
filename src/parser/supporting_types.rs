@@ -1,6 +1,5 @@
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
-use crate::lexer::type_def::TypeDefinition;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
 
@@ -46,12 +45,11 @@ pub struct IndexedIdent {
 
 #[derive(Debug, Clone)]
 pub enum ParamType {
-    Scalar(TypeDefinition, Option<Expr>),
+    Scalar(ClassicalType),
     Qubit(Option<Expr>),
     ArrayRef {
         mutable: bool,
-        element_ty: TypeDefinition,
-        element_size: Option<Expr>,
+        element_ty: ClassicalType,
         dimensions: ArrayDimensions,
     },
 }
@@ -116,7 +114,23 @@ impl ClassicalType {
             ClassicalType::UInt(_) => Ok(Value::Int(0)),
             ClassicalType::Float(_) => Ok(Value::Float(0.0)),
             ClassicalType::Bool(_) => Ok(Value::Bool(false)),
+            ClassicalType::Angle(_) => Ok(Value::Float(0.0)),
+            ClassicalType::Complex(_) => Ok(Value::Complex(0.0, 0.0)),
             _ =>  Err(RuntimeError::UnsupportedType),
+        }
+    }
+
+    pub fn get_size(&self) -> Option<Expr> {
+        match self {
+            ClassicalType::Bit(s)
+            | ClassicalType::Int(s)
+            | ClassicalType::UInt(s)
+            | ClassicalType::Float(s)
+            | ClassicalType::Angle(s)
+            | ClassicalType::Bool(s)
+            | ClassicalType::Duration(s) => s.clone(),
+
+            ClassicalType::Complex(_) => None,
         }
     }
 }

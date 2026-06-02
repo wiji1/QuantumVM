@@ -26,6 +26,10 @@ static TIMING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^([0-9]*\.[0-9]+|[0-9]+)(ns|us|µs|ms|s|dt)").unwrap()
 });
 
+static HARDWARE_QUBIT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\$[0-9]+").unwrap()
+});
+
 #[derive(Debug, Clone)]
 pub enum Literal {
     Integer(i64),
@@ -35,6 +39,7 @@ pub enum Literal {
     Boolean(bool),
     Imaginary(f64),
     Timing(String),
+    HardwareQubit(i64),
 }
 
 impl TokenTrait for Literal {
@@ -72,6 +77,12 @@ impl TokenTrait for Literal {
         if let Some(m) = FLOAT.find(input) {
             let value: f64 = m.as_str().parse().ok()?;
             return Some((Literal::Float(value), m.len()));
+        }
+
+        if let Some(m) = HARDWARE_QUBIT.find(input) {
+            let raw = m.as_str();
+            let value: i64 = raw[1..].parse().ok()?;
+            return Some((Literal::HardwareQubit(value), m.len()));
         }
 
         if let Some(m) = INTEGER.find(input) {
