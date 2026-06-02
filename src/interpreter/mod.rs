@@ -5,21 +5,20 @@ pub(crate) mod runtime_error;
 pub(crate) mod control_flow;
 mod function;
 
+use crate::interpreter::control_flow::ControlFlow;
+use crate::interpreter::function::{get_default_functions, Function};
+use crate::interpreter::quantum::gates::cartesian_product;
+use crate::interpreter::quantum::resolved_gate::ResolvedGate;
+use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
+use crate::lexer::Lexer;
 use crate::parser::expression::Expr;
 use crate::parser::statement::Stmt;
 use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
 use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use crate::interpreter::control_flow::ControlFlow;
-use crate::interpreter::function::{get_default_functions, Function};
-use crate::interpreter::quantum::gates::cartesian_product;
-use crate::interpreter::quantum::resolved_gate::ResolvedGate;
-use crate::interpreter::quantum::statevector::{StateVector, C64};
-use crate::lexer::Lexer;
-use crate::lexer::type_def::TypeDefinition;
 
 macro_rules! numeric_op {
     ($lhs:expr, $rhs:expr, $op:tt, $expr:expr) => {
@@ -919,6 +918,12 @@ impl Interpreter {
                 }
 
                 self.push_scope();
+                self.call_depth += 1;
+
+                if self.call_depth > 512 {
+                    self.call_depth -= 1;
+                    return Err(RuntimeError::RecursionLimit);
+                }
 
                 let mut qubit_params: Vec<(String, Option<Vec<usize>>)> = vec![];
 
@@ -942,6 +947,7 @@ impl Interpreter {
                 }
 
                 self.pop_scope();
+                self.call_depth -= 1;
 
                 match flow {
                     ControlFlow::Return(value) => Ok(value),
