@@ -1,0 +1,91 @@
+pub mod type_repr;
+pub mod type_env;
+pub mod type_error;
+pub mod diagnostics;
+pub mod coercion;
+pub mod expr_checker;
+pub mod stmt_checker;
+
+use crate::parser::Program;
+use crate::type_checker::diagnostics::{Diagnostic, DiagnosticCollector};
+use crate::type_checker::type_env::TypeEnv;
+use crate::type_checker::type_error::TypeError;
+
+#[derive(Debug, Clone)]
+pub struct TypeCheckConfig {
+    pub strict_mode: bool,
+    pub allow_implicit_casts: bool,
+    pub collect_all_errors: bool,
+}
+
+impl Default for TypeCheckConfig {
+    fn default() -> Self {
+        Self {
+            strict_mode: true,
+            allow_implicit_casts: true,
+            collect_all_errors: true,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TypeCheckResult {
+    pub success: bool,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+pub struct TypeChecker {
+    env: TypeEnv,
+    diagnostics: DiagnosticCollector,
+    config: TypeCheckConfig,
+}
+
+impl TypeChecker {
+    pub fn new(config: TypeCheckConfig) -> Self {
+        Self {
+            env: TypeEnv::new(),
+            diagnostics: DiagnosticCollector::new(),
+            config,
+        }
+    }
+
+    pub fn check_program(&mut self, program: &Program) -> TypeCheckResult {
+        for stmt in &program.statements {
+            if let Err(e) = self.check_statement(stmt) {
+                self.diagnostics.add_error(e);
+
+                if self.config.strict_mode && !self.config.collect_all_errors {
+                    break;
+                }
+            }
+        }
+
+        TypeCheckResult {
+            success: !self.diagnostics.has_errors(),
+            diagnostics: self.diagnostics.get_diagnostics().to_vec(),
+        }
+    }
+
+    fn check_statement(&mut self, stmt: &crate::parser::statement::Stmt) -> Result<(), TypeError> {
+        stmt_checker::check_statement(self, stmt)
+    }
+
+    pub fn env(&self) -> &TypeEnv {
+        &self.env
+    }
+    pub fn env_mut(&mut self) -> &mut TypeEnv {
+        &mut self.env
+    }
+    pub fn config(&self) -> &TypeCheckConfig {
+        &self.config
+    }
+    pub fn add_diagnostic(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.add(diagnostic);
+    }
+    pub fn get_diagnostics(&self) -> &[Diagnostic] {
+        self.diagnostics.get_diagnostics()
+    }
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.has_errors()
+    }
+}
