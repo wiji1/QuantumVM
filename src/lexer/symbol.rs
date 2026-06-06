@@ -79,6 +79,7 @@ impl Symbol {
             Symbol::GreaterThan => Some((40, 41)),
             Symbol::Ampersand => Some((30, 31)),
             Symbol::Caret => Some((25, 26)),
+            Symbol::Pipe => Some((20, 21)),
             Symbol::Tilde => Some((20, 21)),
             _ => None,
         }

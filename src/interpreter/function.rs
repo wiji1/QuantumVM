@@ -93,6 +93,7 @@ fn builtin_sizeof(args: Vec<Value>) -> Result<Value, RuntimeError> {
 }
 
 #[derive(Clone)]
+#[derive(Debug)]
 pub enum BuiltInFunction {
     Sin, Cos, Tan, Asin, Acos, Atan,
     Sqrt, Exp, Ln, Floor, Ceil,
@@ -142,7 +143,7 @@ impl BuiltInFunction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Function {
     BuiltIn(BuiltInFunction),
     BuiltInGate(BuiltInGate),
@@ -187,14 +188,16 @@ pub fn get_default_functions() -> HashMap<String, Function> {
 
     functions.insert("U".to_string(),  Function::BuiltInGate(BuiltInGate::U));
     functions.insert("CX".to_string(), Function::BuiltInGate(BuiltInGate::Cx));
+    functions.insert("gphase".to_string(), Function::BuiltInGate(BuiltInGate::GPhase));
 
     functions
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BuiltInGate {
     U,
-    Cx
+    Cx,
+    GPhase
 }
 
 impl BuiltInGate {
@@ -202,6 +205,7 @@ impl BuiltInGate {
         match self {
             BuiltInGate::U  => Ok(ResolvedGate::SingleQubit(gate_u(params[0], params[1], params[2]))),
             BuiltInGate::Cx => Ok(ResolvedGate::TwoQubit(gate_cx())),
+            BuiltInGate::GPhase => Ok(ResolvedGate::GlobalPhase(params[0]))
         }
     }
 
@@ -213,6 +217,9 @@ impl BuiltInGate {
                 Param { ty: ParamType::Scalar(ClassicalType::Angle(None)), name: "lambda".to_string() },
             ],
             BuiltInGate::Cx => vec![],
+            BuiltInGate::GPhase => vec![
+                Param { ty: ParamType::Scalar(ClassicalType::Angle(None)), name: "theta".to_string() },
+            ]
         }
     }
 }

@@ -144,10 +144,6 @@ impl Interpreter {
     pub fn start(&mut self) {
         self.push_scope();
 
-        let stdgates_source = include_str!("../lib/stdgates.inc");
-        self.interpret_include_from_src(stdgates_source.to_string())
-            .expect("Failed to load stdgates.inc");
-
         let defaults_result = self.define_default_operations();
         match defaults_result {
             Ok(_) => {},
@@ -200,8 +196,16 @@ impl Interpreter {
 
     fn define_default_operations(&mut self) -> Result<(), RuntimeError> {
         self.define("pi".to_string(), Value::Float(std::f64::consts::PI))?;
+        self.define("π".to_string(), Value::Float(std::f64::consts::PI))?;
+
         self.define("euler".to_string(), Value::Float(std::f64::consts::E))?;
+        self.define("ℯ".to_string(), Value::Float(std::f64::consts::E))?;
+
         self.define("tau".to_string(), Value::Float(std::f64::consts::TAU))?;
+        self.define("τ".to_string(), Value::Float(std::f64::consts::TAU))?;
+
+        self.define("im".to_string(), Value::Complex(0.0, 1.0))?;
+        self.define("ⅈ".to_string(), Value::Complex(0.0, 1.0))?;
 
         Ok(())
     }
@@ -241,9 +245,9 @@ impl Interpreter {
             Stmt::While { .. } => self.interpret_while(stmt),
             Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
             Stmt::Include(s) => self.interpret_include(s),
+            Stmt::IncludeFromSrc(_, s) => self.interpret_include_from_src(s),
             Stmt::Let { .. } => self.interpret_let(stmt),
             Stmt::Barrier { .. } => Ok(ControlFlow::None),
-            Stmt::GPhase { .. } => Ok(ControlFlow::None),
             Stmt::Pragma => Ok(ControlFlow::None),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Break => Ok(ControlFlow::Break),
@@ -1048,15 +1052,15 @@ impl Interpreter {
         let source = std::fs::read_to_string(&full_path)
             .map_err(|_| RuntimeError::FileNotFound(path.clone()))?;
 
-        self.interpret_include_from_src(source)
+        self.interpret_include_from_src(&source)
     }
 
-    fn interpret_include_from_src(&mut self, source: String) -> Result<ControlFlow, RuntimeError> {
-        let mut lexer = Lexer::new(source);
+    fn interpret_include_from_src(&mut self, source: &String) -> Result<ControlFlow, RuntimeError> {
+        let mut lexer = Lexer::new(source.clone());
         lexer.start();
 
         let mut parser = Parser::new(lexer.tokens);
-        let program = parser.start()
+        let program = parser.start(false)
             .map_err(|e| RuntimeError::ParseError(e))?;
 
         self.interpret_statements(&program.statements)
@@ -1166,6 +1170,11 @@ impl Interpreter {
         let expected_param_count = func.get_params().len();
         if param_values.len() != expected_param_count {
             return Err(RuntimeError::InvalidArgCount(expected_param_count, param_values.len()));
+        }
+
+        if name == "gphase" {
+            // Global phase has no effect on measurements, so we can skip it
+            return Ok(ControlFlow::None);
         }
 
         if let Function::UserDefined { .. } = &func {

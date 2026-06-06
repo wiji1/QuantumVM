@@ -38,15 +38,25 @@ pub struct TypeChecker {
     env: TypeEnv,
     diagnostics: DiagnosticCollector,
     config: TypeCheckConfig,
+    current_function: Option<FunctionContext>,
+}
+
+#[derive(Debug, Clone)]
+struct FunctionContext {
+    name: String,
+    return_type: type_repr::Type,
 }
 
 impl TypeChecker {
     pub fn new(config: TypeCheckConfig) -> Self {
-        Self {
+        let mut checker = Self {
             env: TypeEnv::new(),
             diagnostics: DiagnosticCollector::new(),
             config,
-        }
+            current_function: None,
+        };
+
+        checker
     }
 
     pub fn check_program(&mut self, program: &Program) -> TypeCheckResult {
@@ -54,9 +64,7 @@ impl TypeChecker {
             if let Err(e) = self.check_statement(stmt) {
                 self.diagnostics.add_error(e);
 
-                if self.config.strict_mode && !self.config.collect_all_errors {
-                    break;
-                }
+                if self.config.strict_mode && !self.config.collect_all_errors { break; }
             }
         }
 
@@ -87,5 +95,20 @@ impl TypeChecker {
     }
     pub fn has_errors(&self) -> bool {
         self.diagnostics.has_errors()
+    }
+
+    pub(crate) fn current_function(&self) -> Option<&FunctionContext> {
+        self.current_function.as_ref()
+    }
+
+    pub(crate) fn set_function_context(&mut self, name: String, return_type: type_repr::Type) {
+        self.current_function = Some(FunctionContext {
+            name,
+            return_type,
+        });
+    }
+
+    pub(crate) fn clear_function_context(&mut self) {
+        self.current_function = None;
     }
 }

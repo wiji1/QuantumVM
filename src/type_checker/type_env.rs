@@ -40,8 +40,23 @@ impl TypeEnv {
 
         env.register_builtin_functions();
         env.register_builtin_gates();
+        env.register_builtin_constants();
 
         env
+    }
+
+    fn register_builtin_constants(&mut self) {
+        self.define("pi".to_string(), Type::Float(None), true);
+        self.define("π".to_string(), Type::Float(None), true);
+
+        self.define("tau".to_string(), Type::Float(None), true);
+        self.define("τ".to_string(), Type::Float(None), true);
+
+        self.define("euler".to_string(), Type::Float(None), true);
+        self.define("ℯ".to_string(), Type::Float(None), true);
+
+        self.define("im".to_string(), Type::Complex(Box::new(Type::Float(None))), true);
+        self.define("ⅈ".to_string(), Type::Complex(Box::new(Type::Float(None))), true);
     }
 
     fn register_builtin_functions(&mut self) {
@@ -87,7 +102,6 @@ impl TypeEnv {
         });
     }
 
-    //TODO: This is kind of a messy way of doing this, it would be better to interpret these from the AST
     fn register_builtin_gates(&mut self) {
         self.gates.insert("U".to_string(), GateSignature {
             name: "U".to_string(),
@@ -101,21 +115,11 @@ impl TypeEnv {
             qubits: vec!["control".to_string(), "target".to_string()],
         });
 
-        for gate in ["h", "x", "y", "z", "s", "t", "sdg", "tdg"] {
-            self.gates.insert(gate.to_uppercase(), GateSignature {
-                name: gate.to_uppercase(),
-                params: vec![],
-                qubits: vec!["q".to_string()],
-            });
-        }
-
-        for gate in ["rx", "ry", "rz"] {
-            self.gates.insert(gate.to_uppercase(), GateSignature {
-                name: gate.to_uppercase(),
-                params: vec!["theta".to_string()],
-                qubits: vec!["q".to_string()],
-            });
-        }
+        self.gates.insert("gphase".to_string(), GateSignature {
+            name: "gphase".to_string(),
+            params: vec!["theta".to_string()],
+            qubits: vec![],
+        });
     }
 
     pub fn push_scope(&mut self) {

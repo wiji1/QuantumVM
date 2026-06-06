@@ -29,7 +29,7 @@ fn main() {
 
             let lexer_output = lexer.tokens;
             let mut parser = Parser::new(lexer_output);
-            let program = parser.start().expect("Parse Error");
+            let program = parser.start(true).expect("Parse Error");
 
             let mut type_checker = TypeChecker::new(TypeCheckConfig::default());
             let result = type_checker.check_program(&program);
@@ -46,8 +46,8 @@ fn main() {
             interpreter.start();
 
             //TODO: display output values
-            println!("Outputs: {:?}", interpreter.get_outputs().values());
-            // println!("StateVector: {:?}", interpreter.get_state_vector())
+            println!("Outputs: {:?}", interpreter.get_outputs().iter());
+            println!("StateVector: {:?}", interpreter.get_state_vector())
 
         }
         Err(error) => { panic!("{}", error); }

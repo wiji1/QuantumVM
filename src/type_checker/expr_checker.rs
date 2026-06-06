@@ -23,11 +23,9 @@ impl TypeChecker {
 
             Expr::IndexedIdent(indexed) => { self.check_indexed_ident(indexed) }
 
-            Expr::Measure(_) => { Ok(Bit(Some(1))) }
+            Expr::Measure(operand) => { self.check_measure(operand) }
 
-            Expr::Unary { op, expr } => {
-                self.check_unary(op, expr)
-            }
+            Expr::Unary { op, expr } => { self.check_unary(op, expr) }
 
             Expr::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs)
@@ -84,6 +82,8 @@ impl TypeChecker {
     pub fn check_indexed_ident(&mut self, indexed: &IndexedIdent) -> Result<Type, TypeError> {
         let base_type = self.check_identifier(&indexed.name)?;
 
+        if indexed.indices.is_empty() { return Ok(base_type); }
+
         for index in &indexed.indices {
             let index_type = self.check_expression(index)?;
             if !index_type.is_integer() && !matches!(index_type, Range) {
@@ -120,8 +120,8 @@ impl TypeChecker {
                 }
             }
 
-            Qubit(Some(_)) => {
-                if indexed.indices.len() == 1 {Ok(Qubit(None)) }
+            Qubit(Some(_)) | Qubit(None) => {
+                if indexed.indices.len() == 1 { Ok(Qubit(None)) }
                 else {
                     Err(TypeError::DimensionMismatch {
                         expected: 1,
@@ -251,6 +251,27 @@ impl TypeChecker {
         }
 
         Ok(Range)
+    }
+
+    fn check_measure(&mut self, operand: &crate::parser::supporting_types::GateOperand) -> Result<Type, TypeError> {
+        use crate::parser::supporting_types::GateOperand;
+
+        match operand {
+            GateOperand::Ident(indexed) => {
+                let qubit_type = self.check_indexed_ident(indexed)?;
+
+                match qubit_type {
+                    Qubit(None) => Ok(Bit(Some(1))),
+                    Qubit(Some(size)) => Ok(Bit(Some(size))),
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: Qubit(None),
+                        found: qubit_type,
+                        context: "measure operand".to_string(),
+                    })
+                }
+            }
+            GateOperand::HardwareQubit(_) => { Ok(Bit(Some(1))) }
+        }
     }
 }
 

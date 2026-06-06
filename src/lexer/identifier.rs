@@ -3,7 +3,7 @@ use regex::Regex;
 use crate::lexer::TokenTrait;
 
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap()
+    Regex::new(r"^[\p{L}_][\p{L}\p{N}_]*").unwrap()
 });
 
 

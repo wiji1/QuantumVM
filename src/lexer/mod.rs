@@ -95,7 +95,7 @@ impl Lexer  {
             let mut span = {
                 Span { line: self.current_line, col: pos, len: 0 }
             };
-            
+
             if let Some((token, advance)) = CompoundAssignment::try_parse(&line[pos..]) {
                 span.len = advance;
 

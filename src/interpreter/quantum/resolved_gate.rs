@@ -7,6 +7,7 @@ pub enum ResolvedGate {
     SingleQubit(Matrix2),
     TwoQubit(Matrix4),
     ThreeQubit(Matrix8),
+    GlobalPhase(f64)
 }
 
 impl ResolvedGate {
@@ -15,6 +16,7 @@ impl ResolvedGate {
             ResolvedGate::SingleQubit(m) => ResolvedGate::SingleQubit(conjugate_transpose_2(&m)),
             ResolvedGate::TwoQubit(m) => ResolvedGate::TwoQubit(conjugate_transpose_4(&m)),
             ResolvedGate::ThreeQubit(m) => ResolvedGate::ThreeQubit(conjugate_transpose_8(&m)),
+            ResolvedGate::GlobalPhase(theta) => ResolvedGate::GlobalPhase(-theta)
         }
     }
 
@@ -23,6 +25,7 @@ impl ResolvedGate {
             ResolvedGate::SingleQubit(m) => ResolvedGate::SingleQubit(matrix_pow_2(&m, n)),
             ResolvedGate::TwoQubit(m) => ResolvedGate::TwoQubit(matrix_pow_4(&m, n)),
             ResolvedGate::ThreeQubit(m) => ResolvedGate::ThreeQubit(matrix_pow_8(&m, n)),
+            ResolvedGate::GlobalPhase(theta) => ResolvedGate::GlobalPhase(theta * n as f64)
         }
     }
 
@@ -31,6 +34,7 @@ impl ResolvedGate {
             ResolvedGate::SingleQubit(m) => ResolvedGate::TwoQubit(controlled_2(&m)),
             ResolvedGate::TwoQubit(m) => ResolvedGate::ThreeQubit(controlled_4(&m)),
             ResolvedGate::ThreeQubit(_) => panic!("ctrl on 3-qubit gate not supported"),
+            ResolvedGate::GlobalPhase(theta) => ResolvedGate::SingleQubit(gate_p(theta))
         }
     }
 
@@ -39,6 +43,7 @@ impl ResolvedGate {
             ResolvedGate::SingleQubit(m) => ResolvedGate::TwoQubit(neg_controlled_2(&m)),
             ResolvedGate::TwoQubit(m) => ResolvedGate::ThreeQubit(neg_controlled_4(&m)),
             ResolvedGate::ThreeQubit(_) => panic!("negctrl on 3-qubit gate not supported"),
+            ResolvedGate::GlobalPhase(theta) => ResolvedGate::SingleQubit(neg_controlled_phase(theta))
         }
     }
 
@@ -51,6 +56,10 @@ impl ResolvedGate {
                 sv.apply_two_qubit_gate(&matrix, qubits[0], qubits[1])
             },
             ResolvedGate::ThreeQubit(m) => sv.apply_three_qubit_gate(m, qubits[0], qubits[1], qubits[2]),
+            ResolvedGate::GlobalPhase(theta) => {
+                let phase = C64::new(theta.cos(), theta.sin());
+                for amp in &mut sv.amplitudes { *amp *= phase; }
+            }
         }
     }
 }

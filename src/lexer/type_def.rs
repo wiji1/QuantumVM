@@ -48,7 +48,7 @@ impl TokenTrait for TypeDefinition {
             return Some((Self::Complex, len));
         }
         if let Some(len) = match_keyword(input, "duration") {
-            return Some((Self::Complex, len));
+            return Some((Self::Duration, len));
         }
         if let Some(len) = match_keyword(input, "array") {
             return Some((Self::Array, len));

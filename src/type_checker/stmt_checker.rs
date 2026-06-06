@@ -6,6 +6,8 @@ use crate::type_checker::type_env::{FunctionSignature, GateSignature};
 use crate::type_checker::type_error::TypeError;
 use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 
 pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), TypeError> {
     match stmt {
@@ -100,7 +102,15 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Typ
             Ok(())
         }
 
-        Stmt::Include(_) | Stmt::GPhase(_) | Stmt::Pragma | Stmt::NoOp | Stmt::Extern { .. } => {
+        Stmt::Include(path) => {
+            check_include(checker, path)
+        }
+
+        Stmt::IncludeFromSrc(path, content) => {
+            check_include_from_src(checker, path, content)
+        }
+
+        Stmt::Pragma | Stmt::NoOp | Stmt::Extern { .. } => {
             Ok(())
         }
     }
@@ -248,7 +258,7 @@ fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), 
 fn check_if(checker: &mut TypeChecker, cond: &Expr, then: &[Stmt], else_: &Option<Vec<Stmt>>) -> Result<(), TypeError> {
     let cond_type = checker.check_expression(cond)?;
 
-    if !matches!(cond_type, Type::Bool) {
+    if !cond_type.can_coerce_to(&Type::Bool) {
         return Err(TypeError::NonBooleanCondition { found: cond_type });
     }
 
@@ -398,7 +408,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
 fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<(), TypeError> {
     let cond_type = checker.check_expression(cond)?;
 
-    if !matches!(cond_type, Type::Bool) {
+    if !cond_type.can_coerce_to(&Type::Bool) {
         return Err(TypeError::NonBooleanCondition { found: cond_type });
     }
 
@@ -412,15 +422,43 @@ fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<
 }
 
 fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), TypeError> {
-    if let Some(expr) = expr {
-        checker.check_expression(expr)?;
-    }
+    let func_context = checker.current_function()
+        .ok_or_else(|| TypeError::Other {
+            message: "Return statement outside of function".to_string(),
+        })?;
 
-    // TODO: Check against function return type when we have context
-    Ok(())
+    let expected_type = func_context.return_type.clone();
+
+    match (expr, &expected_type) {
+        (None, Type::Void) => Ok(()),
+        (None, _) => Err(TypeError::ReturnTypeMismatch {
+            expected: expected_type,
+            found: Type::Void,
+        }),
+        (Some(return_expr), Type::Void) => {
+            Err(TypeError::ReturnTypeMismatch {
+                expected: Type::Void,
+                found: checker.check_expression(return_expr)?,
+            })
+        }
+        (Some(return_expr), _) => {
+            let return_type = checker.check_expression(return_expr)?;
+
+            if !return_type.is_compatible_with(&expected_type) {
+                if checker.config().allow_implicit_casts && return_type.can_coerce_to(&expected_type) {
+                    Ok(())
+                } else {
+                    Err(TypeError::ReturnTypeMismatch {
+                        expected: expected_type,
+                        found: return_type,
+                    })
+                }
+            } else { Ok(()) }
+        }
+    }
 }
 
-fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), TypeError> {
+pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), TypeError> {
     let param_types: Vec<Type> = params.iter()
         .map(|p| Type::from_param_type(&p.ty))
         .collect();
@@ -435,17 +473,17 @@ fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_typ
         return_type: ret_type.clone(),
     };
     checker.env_mut().register_function(signature);
+    checker.set_function_context(name.to_string(), ret_type.clone());
 
     checker.env_mut().push_scope();
     for (param, param_type) in params.iter().zip(param_types.iter()) {
         checker.env_mut().define(param.name.clone(), param_type.clone(), false);
     }
 
-    for stmt in body {
-        check_statement(checker, stmt)?;
-    }
+    for stmt in body { check_statement(checker, stmt)?; }
 
     checker.env_mut().pop_scope();
+    checker.clear_function_context();
 
     // TODO: Check that all paths return if return_type is not Void
 
@@ -459,6 +497,17 @@ fn check_gate_def(
     qubits: &[String],
     body: &[Stmt],
 ) -> Result<(), TypeError> {
+    check_gate_def_impl(checker, name, params, qubits, body, true)
+}
+
+pub(crate) fn check_gate_def_impl(
+    checker: &mut TypeChecker,
+    name: &str,
+    params: &[String],
+    qubits: &[String],
+    body: &[Stmt],
+    check_body: bool,
+) -> Result<(), TypeError> {
     let signature = GateSignature {
         name: name.to_string(),
         params: params.to_vec(),
@@ -466,6 +515,8 @@ fn check_gate_def(
     };
     checker.env_mut().register_gate(signature);
     
+    if !check_body { return Ok(()); }
+
     checker.env_mut().push_scope();
 
     for param in params {
@@ -485,6 +536,7 @@ fn check_gate_def(
     Ok(())
 }
 
+//TODO: Allow this to support functions with gate-compatible signatures
 fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubits: &[GateOperand]) -> Result<(), TypeError> {
     let gate_sig = checker.env().get_gate(name)
         .ok_or_else(|| TypeError::UndefinedGate {
@@ -499,11 +551,28 @@ fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubit
         });
     }
 
-    if gate_sig.qubits.len() != qubits.len() {
+    let expected_qubit_count = gate_sig.qubits.len();
+
+    if expected_qubit_count == 0 {
+        if !qubits.is_empty() {
+            return Err(TypeError::ArityMismatch {
+                name: format!("{name} (qubits)"),
+                expected: 0,
+                found: qubits.len(),
+            });
+        }
+    } else if qubits.is_empty() {
         return Err(TypeError::ArityMismatch {
             name: format!("{name} (qubits)"),
-            expected: gate_sig.qubits.len(),
-            found: qubits.len(),
+            expected: expected_qubit_count,
+            found: 0,
+        });
+    } else if qubits.len() % expected_qubit_count != 0 {
+        return Err(TypeError::Other {
+            message: format!(
+                "Gate '{}' expects {} qubit(s), but {} were provided. For broadcasting, the number of qubits must be a multiple of {}.",
+                name, expected_qubit_count, qubits.len(), expected_qubit_count
+            ),
         });
     }
 
@@ -541,3 +610,42 @@ fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Resu
         GateOperand::HardwareQubit(_) => Ok(())
     }
 }
+
+fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), TypeError> {
+    let content = if path == "stdgates.inc" {
+        include_str!("../lib/stdgates.inc").to_string()
+    } else {
+        std::fs::read_to_string(path).map_err(|_| TypeError::Other {
+            message: format!("Failed to read include file: {path}"),
+        })?
+    };
+
+    check_include_from_src(checker, &path.to_string(), &content)
+}
+
+fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &String) -> Result<(), TypeError> {
+    let mut lexer = Lexer::new(content.to_string());
+    lexer.start();
+
+    let mut parser = Parser::new(lexer.tokens);
+    let program = parser.start(false).map_err(|e| {
+        TypeError::Other {
+            message: format!("Failed to parse include file {path}: {e:?}"),
+        }
+    })?;
+
+    for stmt in &program.statements {
+        match stmt {
+            Stmt::GateDef { name, params, qubits, body } => {
+                check_gate_def_impl(checker, name, params, qubits, body, false)?;
+            }
+            Stmt::Def { name, params, return_type, body } => {
+                check_def(checker, name, params, return_type, body)?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+

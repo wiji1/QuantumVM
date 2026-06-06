@@ -36,18 +36,18 @@ pub enum Type {
 impl Type {
     pub fn from_classical_type(ct: &ClassicalType) -> Self {
         match ct {
-            ClassicalType::Bit(size) => Type::Bit(Self::extract_size(size)),
-            ClassicalType::Int(size) => Type::Int(Self::extract_size(size)),
-            ClassicalType::UInt(size) => Type::UInt(Self::extract_size(size)),
-            ClassicalType::Float(size) => Type::Float(Self::extract_size(size)),
-            ClassicalType::Angle(size) => Type::Angle(Self::extract_size(size)),
-            ClassicalType::Bool(_) => Type::Bool,
-            ClassicalType::Duration(_) => Type::Duration,
-            ClassicalType::Stretch(_) => Type::Stretch,
+            ClassicalType::Bit(size) => Bit(Self::extract_size(size)),
+            ClassicalType::Int(size) => Int(Self::extract_size(size)),
+            ClassicalType::UInt(size) => UInt(Self::extract_size(size)),
+            ClassicalType::Float(size) => Float(Self::extract_size(size)),
+            ClassicalType::Angle(size) => Angle(Self::extract_size(size)),
+            ClassicalType::Bool(_) => Bool,
+            ClassicalType::Duration(_) => Duration,
+            ClassicalType::Stretch(_) => Stretch,
             ClassicalType::Complex(inner) => {
                 match inner {
-                    Some(inner_ty) => Type::Complex(Box::new(Type::from_classical_type(inner_ty))),
-                    None => Type::Complex(Box::new(Type::Float(None))),
+                    Some(inner_ty) => Complex(Box::new(Type::from_classical_type(inner_ty))),
+                    None => Complex(Box::new(Float(None))),
                 }
             }
         }
@@ -56,7 +56,7 @@ impl Type {
     pub fn from_param_type(pt: &ParamType) -> Self {
         match pt {
             ParamType::Scalar(ct) => Type::from_classical_type(ct),
-            ParamType::Qubit(size) => Type::Qubit(Self::extract_size(size)),
+            ParamType::Qubit(size) => Qubit(Self::extract_size(size)),
             ParamType::ArrayRef { element_ty, dimensions, .. } => {
                 let elem_type = Type::from_classical_type(element_ty);
                 let dims = match dimensions {
@@ -90,7 +90,7 @@ impl Type {
             return true;
         }
 
-        match (self, other) {
+        match (self.denest(), other.denest()) {
             (Int(a), Int(b)) | (UInt(a), UInt(b)) | (Float(a), Float(b)) |
             (Bit(a), Bit(b)) | (Angle(a), Angle(b)) | (Qubit(a), Qubit(b)) => {
                 match (a, b) {
@@ -103,18 +103,18 @@ impl Type {
 
             (Bool, Bit(Some(1))) | (Bit(Some(1)), Bool) => true,
 
-            (Complex(a), Complex(b)) => a.is_compatible_with(b),
+            (Complex(a), Complex(b)) => a.is_compatible_with(&b),
 
             (Array { element_type: e1, dimensions: d1 },
              Array { element_type: e2, dimensions: d2 }) => {
-                e1.is_compatible_with(e2) && d1.len() == d2.len()
+                e1.is_compatible_with(&e2) && d1 == d2
             }
 
             (Function { params: p1, return_type: r1 },
              Function { params: p2, return_type: r2 }) => {
                 p1.len() == p2.len() &&
                 p1.iter().zip(p2.iter()).all(|(a, b)| a.is_compatible_with(b)) &&
-                r1.is_compatible_with(r2)
+                r1.is_compatible_with(&r2)
             }
 
             _ => false,
@@ -131,11 +131,18 @@ impl Type {
             (Bit(Some(1)), Bool) | (Bool, Bit(Some(1))) => true,
 
             (Bit(_), Int(_)) | (Bit(_), UInt(_)) => true,
+            (Bool, Bit(size)) => {
+                match size {
+                    Some(a) => *a == 1,
+                    None => false,
+                }
+            }
 
             (Int(_), Complex(_)) | (UInt(_), Complex(_)) |
             (Float(_), Complex(_)) | (Bool, Complex(_)) => true,
 
-            (Angle(_), Float(_)) => true,
+            (Angle(_), Float(_)) | (Float(_), Angle(_)) => true,
+            (Int(_), Angle(_)) | (UInt(_), Angle(_)) => true,
 
             _ => false,
         }
@@ -278,5 +285,28 @@ impl Type {
             Unspecified => "unspecified".to_string(),
             Unknown => "unknown".to_string(),
         }
+    }
+
+    pub fn denest(&self) -> Type {
+        let mut dims = vec![];
+        let mut outer = self.clone();
+
+        match outer {
+            Array { .. } => {}
+            _ => return outer
+        };
+
+        loop {
+            match outer {
+                Array { element_type: e1, dimensions: d1 } => {
+                    dims.extend(d1);
+                    outer = *e1.clone();
+                }
+                _ => break,
+            }
+
+        }
+
+        Array { element_type: Box::new(outer), dimensions: dims }
     }
 }

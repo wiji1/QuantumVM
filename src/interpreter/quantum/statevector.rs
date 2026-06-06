@@ -90,7 +90,7 @@ impl StateVector {
             self.amplitudes[partner] = new_partner;
         }
     }
-    
+
     pub fn apply_two_qubit_gate(&mut self, gate: &Matrix4, qubit0: usize, qubit1: usize) {
         let size = self.amplitudes.len();
         let (q0_bit, q1_bit) = if qubit0 < qubit1 { (qubit0, qubit1) } else

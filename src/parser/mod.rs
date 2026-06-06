@@ -8,7 +8,7 @@ use crate::lexer::keyword::Keyword;
 use crate::lexer::literal::Literal;
 use crate::lexer::symbol::{CompoundSymbol, Symbol};
 use crate::lexer::type_def::TypeDefinition;
-use crate::lexer::{Span, Token, TokenType};
+use crate::lexer::{Token, TokenType};
 use crate::parser::expression::Expr;
 use crate::parser::parse_error::ParseError;
 use crate::parser::statement::Stmt;
@@ -83,13 +83,19 @@ impl Parser {
         Parser { tokens, cursor: 0 }
     }
 
-    pub fn start(&mut self) -> Result<Program, ParseError> {
+    pub fn start(&mut self, include_lib: bool) -> Result<Program, ParseError> {
         let version = self.parse_version()?;
         let mut statements = vec![];
         while !self.is_at_end() {
             self.skip_trivia();
             if self.is_at_end() { break; }
             statements.push(self.parse_statement()?);
+        }
+
+        if include_lib {
+            let lib_name = "stdgates.inc";
+            let stdgates_source = include_str!("../lib/stdgates.inc");
+            statements.insert(0, Stmt::IncludeFromSrc(lib_name.to_string(), stdgates_source.to_string()));
         }
 
         Ok(Program { version, statements })
@@ -223,6 +229,7 @@ impl Parser {
             }
             TokenType::Symbol(Symbol::LParen) => {
                 self.advance();
+                self.skip_trivia();
                 let expr = self.parse_expr(0)?;
                 expect_token!(self, TokenType::Symbol(Symbol::RParen));
                 expr
@@ -235,21 +242,15 @@ impl Parser {
                 loop {
                     self.skip_trivia();
 
-                    if self.at(TokenType::Symbol(Symbol::RBrace)) {
-                        break;
-                    }
+                    if self.at(TokenType::Symbol(Symbol::RBrace)) { break; }
 
-                    if self.is_at_end() {
-                        break;
-                    }
+                    if self.is_at_end() { break; }
 
                     values.push(self.parse_expr(0)?);
 
                     self.skip_trivia();
 
-                    if self.at(TokenType::Symbol(Symbol::Comma)) {
-                        self.advance();
-                    }
+                    if self.at(TokenType::Symbol(Symbol::Comma)) { self.advance(); }
                 }
 
                 expect_token!(self, TokenType::Symbol(Symbol::RBrace));
@@ -306,6 +307,7 @@ impl Parser {
             if left_bp < min_bp { break; }
 
             self.advance();
+            self.skip_trivia();
 
             let right = self.parse_expr(right_bp)?;
             left = Expr::Binary { op: binary_operator.unwrap(), lhs: Box::from(left), rhs: Box::from(right) }
@@ -488,6 +490,7 @@ impl Parser {
 
         let init = if self.at(TokenType::Symbol(Symbol::Equals)) {
             self.advance();
+            self.skip_trivia();
             Some(self.parse_expr(0)?)
         } else { None };
 
@@ -506,6 +509,7 @@ impl Parser {
         );
 
         expect_token!(self, TokenType::Symbol(Symbol::Equals));
+        self.skip_trivia();
 
         let init = self.parse_expr(0)?;
 
@@ -637,11 +641,21 @@ impl Parser {
             modifiers.push(self.parse_gate_modifier()?);
         }
 
-        let identifier = extract_token!(
-            self,
-            TokenType::Identifier(Identifier::Identifier(s)) => s,
-            TokenType::Identifier(Identifier::Identifier(String::new()))
-        );
+        let identifier = match self.peek().kind.clone() {
+            TokenType::Identifier(Identifier::Identifier(s)) => {
+                self.advance();
+                s
+            }
+            TokenType::Keyword(Keyword::GPhase) => {
+                self.advance();
+                "gphase".to_string()
+            }
+            _ => return Err(ParseError::UnexpectedToken {
+                expected: TokenType::Identifier(Identifier::Identifier(String::new())),
+                found: self.peek().kind.clone(),
+                span: self.peek().span.clone(),
+            })
+        };
 
         let mut params: Vec<Expr> = vec![];
 
@@ -735,6 +749,7 @@ impl Parser {
     fn extract_index_operand(&mut self) -> Result<Option<Expr>, ParseError> {
         if self.at(TokenType::Symbol(Symbol::LBracket)) {
             self.advance();
+            self.skip_trivia();
             let expr = self.parse_expr(0)?;
                 expect_token!(self, TokenType::Symbol(Symbol::RBracket));
             Ok(Some(expr))
@@ -823,7 +838,7 @@ impl Parser {
             TokenType::TypeDef(TypeDefinition::Int)
         );
 
-        let classical_type = match type_def.get_classical_type(None) {
+        let classical_type = match type_def.get_classical_type(self.extract_index_operand()?) {
             Some(classical_type) => classical_type,
             None => return Err(ParseError::InvalidStatement {
                 found: self.peek().kind.clone(),
@@ -898,6 +913,11 @@ impl Parser {
 
         let expr = match self.peek().kind {
             TokenType::Symbol(Symbol::Semicolon) => { None }
+            TokenType::Keyword(Keyword::Measure) => {
+                self.advance();
+                let qubit = self.parse_gate_operand()?;
+                Some(Expr::Measure(Box::new(qubit)))
+            }
             _ => { Some(self.parse_expr(0)?) }
         };
 
@@ -926,6 +946,7 @@ impl Parser {
 
         let init = if self.at(TokenType::Symbol(Symbol::Equals)) {
             self.advance();
+            self.skip_trivia();
             Some(self.parse_expr(0)?)
         } else { None };
 
@@ -1027,6 +1048,7 @@ impl Parser {
                     let expr = self.parse_expr(0)?;
                     ArrayDimensions::Dim(expr)
                 } else {
+                    expect_token!(self, TokenType::Symbol(Symbol::Comma));
                     let exprs = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
                     ArrayDimensions::Explicit(exprs)
                 };
@@ -1218,6 +1240,7 @@ impl Parser {
         );
 
         expect_token!(self, TokenType::Symbol(Symbol::Equals));
+        self.skip_trivia();
         let value = self.parse_expr(0)?;
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
@@ -1227,14 +1250,25 @@ impl Parser {
     fn parse_gphase(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
-        let mut exprs = None;
+        let mut params = vec![];
         if self.at(TokenType::Symbol(Symbol::LParen)) {
             self.advance();
-            exprs = Some(self.parse_expression_list(TokenType::Symbol(Symbol::RParen))?);
-             expect_token!(self, TokenType::Symbol(Symbol::RParen));
+            params = self.parse_expression_list(TokenType::Symbol(Symbol::RParen))?;
+            expect_token!(self, TokenType::Symbol(Symbol::RParen));
         }
+
+        let qubits = if !self.at(TokenType::Symbol(Symbol::Semicolon)) {
+            self.parse_gate_operand_list(TokenType::Symbol(Symbol::Semicolon))?
+        } else { vec![] };
+
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
-        Ok(Stmt::GPhase(exprs))
+
+        Ok(Stmt::GateCall {
+            name: "gphase".to_string(),
+            modifiers: vec![],
+            params,
+            qubits
+        })
     }
 
     fn parse_qreg(&mut self) -> Result<Stmt, ParseError> {

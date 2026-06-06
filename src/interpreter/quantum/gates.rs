@@ -197,3 +197,17 @@ pub fn cartesian_product(groups: &[Vec<usize>]) -> Vec<Vec<usize>> {
         }).collect()
     })
 }
+
+pub fn gate_p(lambda: f64) -> Matrix2 {
+    [
+        [c(1.0, 0.0), c(0.0, 0.0)],
+        [c(0.0, 0.0), c(lambda.cos(), lambda.sin())]
+    ]
+}
+
+pub fn neg_controlled_phase(theta: f64) -> Matrix2 {
+    [
+        [c(theta.cos(), theta.sin()), c(0.0, 0.0)],
+        [c(0.0, 0.0), c(1.0, 0.0)]
+    ]
+}
