@@ -2,6 +2,7 @@ mod lexer;
 mod parser;
 mod interpreter;
 mod type_checker;
+mod coercion;
 
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;

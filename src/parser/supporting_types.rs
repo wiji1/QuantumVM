@@ -118,8 +118,8 @@ impl ClassicalType {
             ClassicalType::Bool(_) => Ok(Value::Bool(false)),
             ClassicalType::Angle(_) => Ok(Value::Float(0.0)),
             ClassicalType::Complex(_) => Ok(Value::Complex(0.0, 0.0)),
-            ClassicalType::Duration(_) => Ok(Value::Int(0)),
-            ClassicalType::Stretch(_) => Ok(Value::Int(0)),
+            ClassicalType::Duration(_) => Ok(Value::Timing("".to_string())),
+            ClassicalType::Stretch(_) => Ok(Value::Timing("".to_string())),
             _ =>  Err(RuntimeError::UnsupportedType),
         }
     }

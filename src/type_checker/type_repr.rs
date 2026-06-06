@@ -122,30 +122,7 @@ impl Type {
     }
 
     pub fn can_coerce_to(&self, target: &Type) -> bool {
-        if self.is_compatible_with(target) { return true; }
-
-        match (self, target) {
-            (Bool, Int(_)) | (Bool, UInt(_)) => true,
-            (Bool, Float(_)) | (Int(_), Float(_)) | (UInt(_), Float(_)) => true,
-
-            (Bit(Some(1)), Bool) | (Bool, Bit(Some(1))) => true,
-
-            (Bit(_), Int(_)) | (Bit(_), UInt(_)) => true,
-            (Bool, Bit(size)) => {
-                match size {
-                    Some(a) => *a == 1,
-                    None => false,
-                }
-            }
-
-            (Int(_), Complex(_)) | (UInt(_), Complex(_)) |
-            (Float(_), Complex(_)) | (Bool, Complex(_)) => true,
-
-            (Angle(_), Float(_)) | (Float(_), Angle(_)) => true,
-            (Int(_), Angle(_)) | (UInt(_), Angle(_)) => true,
-
-            _ => false,
-        }
+        crate::coercion::can_type_coerce(self, target)
     }
 
     pub fn coerce_to(&self, target: &Type) -> Option<Type> {

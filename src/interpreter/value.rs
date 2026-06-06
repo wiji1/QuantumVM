@@ -9,7 +9,7 @@ pub enum Value {
     Void,
     Array(Vec<Value>),
     Range { start: Option<i64>, stop: Option<i64>, step: Option<i64> },
-
+    Timing(String),
 }
 
 impl PartialEq for Value {

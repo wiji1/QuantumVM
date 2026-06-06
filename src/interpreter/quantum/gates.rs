@@ -114,10 +114,8 @@ pub fn matrix_mul_4(a: &Matrix4, b: &Matrix4) -> Matrix4 {
     result
 }
 
-// Permute a 4x4 matrix to swap qubit order from |q1,q0⟩ to |q0,q1⟩
-// This swaps rows/columns according to the permutation [0,2,1,3]
 pub fn swap_qubit_order(m: &Matrix4) -> Matrix4 {
-    let perm = [0, 2, 1, 3];  // Maps |00⟩,|01⟩,|10⟩,|11⟩ to |00⟩,|10⟩,|01⟩,|11⟩
+    let perm = [0, 2, 1, 3];
     let mut result = [[c(0.0, 0.0); 4]; 4];
     for i in 0..4 {
         for j in 0..4 {

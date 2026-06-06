@@ -19,6 +19,8 @@ use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter
 use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use crate::coercion::{cast_value, coerce_to_bool, coerce_value, infer_type_from_value};
+use crate::type_checker::type_repr::Type;
 
 macro_rules! numeric_op {
     ($lhs:expr, $rhs:expr, $op:tt, $expr:expr) => {
@@ -185,9 +187,15 @@ impl Interpreter {
         if self.constants.contains(name) {
             return Err(RuntimeError::ConstReassignment(name.to_string()));
         }
+
         for scope in self.scopes.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name.to_string(), value);
+            if let Some(current_value) = scope.get(name) {
+                let target_type = infer_type_from_value(current_value);
+
+                let coerced_value = coerce_value(value, &target_type)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+                scope.insert(name.to_string(), coerced_value);
                 return Ok(ControlFlow::None);
             }
         }
@@ -329,7 +337,11 @@ impl Interpreter {
             None => default_value,
         };
 
-        self.define(name.to_string(), init_value)?;
+        let target_type = Type::from_classical_type(ty);
+        let coerced_value = coerce_value(init_value, &target_type)
+            .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+        self.define(name.to_string(), coerced_value)?;
 
         Ok(ControlFlow::None)
     }
@@ -390,7 +402,7 @@ impl Interpreter {
             Expr::Bool(b) => { Ok(Value::Bool(*b)) }
             Expr::Array(a) => { self.evaluate_array(a) }
             Expr::Imaginary(f) => { Ok(Value::Complex(0.0, *f)) }
-            Expr::Timing(_) => { Ok(Value::Int(0)) }
+            Expr::Timing(s) => { Ok(Value::Timing(s.clone())) }
             Expr::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
             Expr::Ident(name) => {
                 if let Some(val) = self.lookup(name) { Ok(val.clone()) }
@@ -405,7 +417,9 @@ impl Interpreter {
             Expr::Call { name, args } => { self.call_function(name, args) }
             Expr::Cast { ty, expr } => {
                 let value = self.evaluate_expression(expr)?;
-                self.apply_cast(ty, value)
+                let target_type = Type::from_classical_type(ty);
+                cast_value(value, &target_type)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))
             }
             Expr::Range { .. } => { self.evaluate_range(expr) }
         }
@@ -440,7 +454,7 @@ impl Interpreter {
                     let start = start.unwrap_or(0) as usize;
                     let stop = stop.unwrap_or(arr.len() as i64) as usize;
                     let step = step.unwrap_or(1) as usize;
-                    Value::Array((start..stop).step_by(step).map(|i| arr[i].clone()).collect())
+                    Value::Array((start..=stop).step_by(step).map(|i| arr[i].clone()).collect())
                 }
                 (Value::Bits { value, width }, Value::Int(i)) => {
                     if i as usize >= width { return Err(RuntimeError::IndexOutOfBounds(i as usize, width)); }
@@ -472,7 +486,27 @@ impl Interpreter {
                     _ => Err(RuntimeError::TypeMismatch("qubit set index must be int".to_string())),
                 }).collect::<Result<Vec<_>, _>>()?
             }
-            _ => return Err(RuntimeError::TypeMismatch("qubit index must be int or set".to_string())),
+            Value::Range { start, stop, step } => {
+                let start = start.unwrap_or(0) as usize;
+                let stop = stop.unwrap_or(indices.len() as i64) as usize;
+                let step = step.unwrap_or(1) as usize;
+                (start..=stop).step_by(step)
+                    .map(|i| indices.get(i).copied().ok_or(RuntimeError::IndexOutOfBounds(i, indices.len())))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            other => {
+                let coerced = coerce_value(other, &Type::Int(None))
+                    .map_err(|_| RuntimeError::TypeMismatch("qubit index must be int, range, or set".to_string()))?;
+                match coerced {
+                    Value::Int(i) => {
+                        let qubit = indices.get(i as usize)
+                            .copied()
+                            .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len()))?;
+                        vec![qubit]
+                    }
+                    _ => return Err(RuntimeError::TypeMismatch("qubit index coercion did not produce int".to_string())),
+                }
+            }
         };
 
         if exprs.len() > 1 { return self.evaluate_qubit_ident(selected, &exprs[1..]); }
@@ -527,7 +561,7 @@ impl Interpreter {
             BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr),
             BinaryOp::Mul => numeric_op!(lhs_evaluated, rhs_evaluated, *, expr),
             BinaryOp::Div => match (lhs_evaluated, rhs_evaluated) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
@@ -546,13 +580,27 @@ impl Interpreter {
             BinaryOp::Xor => bitwise_op!(lhs_evaluated, rhs_evaluated, ^, expr),
             BinaryOp::Shl => bitwise_op!(lhs_evaluated, rhs_evaluated, <<, expr),
             BinaryOp::Shr => bitwise_op!(lhs_evaluated, rhs_evaluated, >>, expr),
-            BinaryOp::LogicAnd => match (lhs_evaluated, rhs_evaluated) {
-                (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
-                _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
+            BinaryOp::LogicAnd => {
+                let lhs_bool = coerce_to_bool(lhs_evaluated)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                let rhs_bool = coerce_to_bool(rhs_evaluated)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+                match (lhs_bool, rhs_bool) {
+                    (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
+                    _ => unreachable!("coerce_to_bool should always return Bool"),
+                }
             },
-            BinaryOp::LogicOr => match (lhs_evaluated, rhs_evaluated) {
-                (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
-                _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
+            BinaryOp::LogicOr => {
+                let lhs_bool = coerce_to_bool(lhs_evaluated)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                let rhs_bool = coerce_to_bool(rhs_evaluated)
+                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+                match (lhs_bool, rhs_bool) {
+                    (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
+                    _ => unreachable!("coerce_to_bool should always return Bool"),
+                }
             },
             BinaryOp::Eq  => comparison_op!(lhs_evaluated, rhs_evaluated, ==, expr),
             BinaryOp::Neq => comparison_op!(lhs_evaluated, rhs_evaluated, !=, expr),
@@ -612,9 +660,42 @@ impl Interpreter {
                 _ => Err(RuntimeError::UnsupportedOperation("/".to_string()))
             },
             BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%="),
-            BinaryOp::And => bitwise_op!(lhs, rhs, &, "&="),
-            BinaryOp::Or  => bitwise_op!(lhs, rhs, |, "|="),
-            BinaryOp::Xor => bitwise_op!(lhs, rhs, ^, "^="),
+            BinaryOp::And => {
+                if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
+                    let lhs_bool = coerce_to_bool(lhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    let rhs_bool = coerce_to_bool(rhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    match (lhs_bool, rhs_bool) {
+                        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a & b)),
+                        _ => unreachable!(),
+                    }
+                } else { bitwise_op!(lhs, rhs, &, "&=") }
+            },
+            BinaryOp::Or => {
+                if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
+                    let lhs_bool = coerce_to_bool(lhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    let rhs_bool = coerce_to_bool(rhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    match (lhs_bool, rhs_bool) {
+                        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a | b)),
+                        _ => unreachable!(),
+                    }
+                } else { bitwise_op!(lhs, rhs, |, "|=") }
+            },
+            BinaryOp::Xor => {
+                if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
+                    let lhs_bool = coerce_to_bool(lhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    let rhs_bool = coerce_to_bool(rhs)
+                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    match (lhs_bool, rhs_bool) {
+                        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a ^ b)),
+                        _ => unreachable!(),
+                    }
+                } else { bitwise_op!(lhs, rhs, ^, "^=") }
+            },
             BinaryOp::Shl => bitwise_op!(lhs, rhs, <<, "<<="),
             BinaryOp::Shr => bitwise_op!(lhs, rhs, >>, ">>="),
             BinaryOp::Pow => match (lhs, rhs) {
@@ -641,7 +722,7 @@ impl Interpreter {
                 let start = start.unwrap_or(0) as usize;
                 let stop = stop.unwrap_or(arr.len() as i64) as usize;
                 let step = step.unwrap_or(1) as usize;
-                for (i, val) in (start..stop).step_by(step).zip(new_values) {
+                for (i, val) in (start..=stop).step_by(step).zip(new_values) {
                     arr[i] = val;
                 }
                 return Ok(ControlFlow::None);
@@ -710,8 +791,11 @@ impl Interpreter {
 
         let evaluated = self.evaluate_expression(cond)?;
 
-        let Value::Bool(bool) = evaluated else {
-            unreachable!("Expression evaluation failed!");
+        let coerced = coerce_to_bool(evaluated)
+            .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+        let Value::Bool(bool) = coerced else {
+            unreachable!("coerce_to_bool should always return a Bool value!");
         };
 
         if bool {
@@ -784,10 +868,14 @@ impl Interpreter {
 
         loop {
             let evaluated = self.evaluate_expression(cond)?;
-            match evaluated {
+
+            let coerced = coerce_to_bool(evaluated)
+                .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+
+            match coerced {
                 Value::Bool(true) => {}
                 Value::Bool(false) => break,
-                _ => return Err(RuntimeError::TypeMismatch("while condition must be bool".to_string())),
+                _ => unreachable!("coerce_to_bool should always return a Bool value!"),
             }
 
             self.push_scope();
@@ -865,7 +953,7 @@ impl Interpreter {
                         None => return Err(RuntimeError::NullPointer),
                     };
 
-                    if current_int >= stop_int { break; }
+                    if current_int > stop_int { break; }
                     self.push_scope();
                     let flow = self.interpret_statements(body)?;
                     self.pop_scope();
@@ -975,50 +1063,6 @@ impl Interpreter {
         }
     }
 
-    fn apply_cast(&self, ty: &ClassicalType, value: Value) -> Result<Value, RuntimeError> {
-        match &ty {
-            ClassicalType::Int(_) => match value {
-                Value::Int(i)   => Ok(Value::Int(i)),
-                Value::Float(f) => Ok(Value::Int(f as i64)),
-                Value::Bool(b)  => Ok(Value::Int(b as i64)),
-                Value::Bits { value, .. } => Ok(Value::Int(value as i64)),
-                _ => Err(RuntimeError::TypeMismatch("cannot cast to int".to_string())),
-            },
-            ClassicalType::Float(_) => match value {
-                Value::Float(f) => Ok(Value::Float(f)),
-                Value::Int(i)   => Ok(Value::Float(i as f64)),
-                Value::Bool(b)  => Ok(Value::Float(b as i64 as f64)),
-                _ => Err(RuntimeError::TypeMismatch("cannot cast to float".to_string())),
-            },
-            ClassicalType::Bool(_) => match value {
-                Value::Bool(b)  => Ok(Value::Bool(b)),
-                Value::Int(i)   => Ok(Value::Bool(i != 0)),
-                Value::Float(f) => Ok(Value::Bool(f != 0.0)),
-                Value::Bits { value, .. } => Ok(Value::Bool(value != 0)),
-                _ => Err(RuntimeError::TypeMismatch("cannot cast to bool".to_string())),
-            },
-            ClassicalType::Bit(size_expr) => {
-                let width = match size_expr {
-                    Some(Expr::Int(n)) => n.clone() as usize,
-                    None => 1,
-                    _ => return Err(RuntimeError::InvalidSize),
-                };
-                match value {
-                    Value::Int(i)  => Ok(Value::Bits { value: i as u64, width }),
-                    Value::Bits { value, .. } => Ok(Value::Bits { value, width }),
-                    Value::Bool(b) => Ok(Value::Bits { value: b as u64, width }),
-                    _ => Err(RuntimeError::TypeMismatch("cannot cast to bit".to_string())),
-                }
-            },
-            ClassicalType::Complex(_) => match value {
-                Value::Complex(re, im) => Ok(Value::Complex(re, im)),
-                Value::Float(f) => Ok(Value::Complex(f, 0.0)),
-                Value::Int(i) => Ok(Value::Complex(i as f64, 0.0)),
-                _ => Err(RuntimeError::TypeMismatch("cannot cast to complex".to_string())),
-            },
-            _ => Err(RuntimeError::UnsupportedType),
-        }
-    }
 
     fn interpret_io_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
         let Stmt::IoDecl { direction, ty, name } = stmt else {
@@ -1172,10 +1216,7 @@ impl Interpreter {
             return Err(RuntimeError::InvalidArgCount(expected_param_count, param_values.len()));
         }
 
-        if name == "gphase" {
-            // Global phase has no effect on measurements, so we can skip it
-            return Ok(ControlFlow::None);
-        }
+        if name == "gphase" { return Ok(ControlFlow::None); }
 
         if let Function::UserDefined { .. } = &func {
             let mut args: Vec<Expr> = params.clone();
@@ -1398,6 +1439,30 @@ impl Interpreter {
             Value::Qubit(indices) => {
                 self.qubit_map.insert(name.clone(), indices);
                 Ok(ControlFlow::None)
+            }
+            Value::Array(arr) => {
+                let mut all_qubits = true;
+                let mut flattened_indices = Vec::new();
+
+                for val in &arr {
+                    match val {
+                        Value::Qubit(indices) => {
+                            flattened_indices.extend(indices);
+                        }
+                        _ => {
+                            all_qubits = false;
+                            break;
+                        }
+                    }
+                }
+
+                if all_qubits {
+                    self.qubit_map.insert(name.clone(), flattened_indices);
+                    Ok(ControlFlow::None)
+                } else {
+                    self.define(name.clone(), Value::Array(arr))?;
+                    Ok(ControlFlow::None)
+                }
             }
             other => {
                 self.define(name.clone(), other)?;

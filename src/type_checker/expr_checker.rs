@@ -286,8 +286,8 @@ fn is_valid_cast(from: &Type, to: &Type) -> bool {
     if matches!(from, Bit(_)) && matches!(to, Int(_) | UInt(_)) { return true; }
     if matches!(from, Int(_) | UInt(_)) && matches!(to, Bit(_)) { return true; }
 
-    if matches!(from, Bit(Some(1))) && matches!(to, Bool) { return true; }
-    if matches!(from, Bool) && matches!(to, Bit(Some(1))) { return true; }
+    if matches!(from, Bit(_)) && matches!(to, Bool) { return true; }
+    if matches!(from, Bool) && matches!(to, Bit(_)) { return true; }
 
     if matches!(from, Angle(_)) && matches!(to, Float(_)) { return true; }
     if matches!(from, Float(_)) && matches!(to, Angle(_)) { return true; }
