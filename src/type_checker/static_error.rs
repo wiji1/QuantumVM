@@ -94,6 +94,14 @@ pub enum StaticError {
         name: String
     },
 
+    DuplicateFunctionDefinition {
+        name: String
+    },
+
+    DuplicateGateDefinition {
+        name: String
+    },
+
     Other {
         message: String,
     },
@@ -207,6 +215,12 @@ impl fmt::Display for StaticError {
             }
             StaticError::DuplicateVariableDefinition { name } => {
                 write!(f, "Duplicate variable definition: {name}")
+            }
+            StaticError::DuplicateFunctionDefinition { name } => {
+                write!(f, "Duplicate function definition: {name}")
+            }
+            StaticError::DuplicateGateDefinition { name } => {
+                write!(f, "Duplicate gate definition: {name}")
             }
             StaticError::Other { message } => {
                 write!(f, "{message}")

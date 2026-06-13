@@ -58,7 +58,7 @@ impl TypeEnv {
 
         self.define("im".to_string(), Type::Complex(Box::new(Type::Float(None))), true)?;
         self.define("ⅈ".to_string(), Type::Complex(Box::new(Type::Float(None))), true)?;
-        
+
         Ok(())
     }
 
@@ -110,12 +110,6 @@ impl TypeEnv {
             name: "U".to_string(),
             params: vec!["theta".to_string(), "phi".to_string(), "lambda".to_string()],
             qubits: vec!["q".to_string()],
-        });
-
-        self.gates.insert("CX".to_string(), GateSignature {
-            name: "CX".to_string(),
-            params: vec![],
-            qubits: vec!["control".to_string(), "target".to_string()],
         });
 
         self.gates.insert("gphase".to_string(), GateSignature {
@@ -193,16 +187,24 @@ impl TypeEnv {
         }
     }
 
-    pub fn register_function(&mut self, sig: FunctionSignature) {
+    pub fn register_function(&mut self, sig: FunctionSignature) -> Result<(), StaticError> {
+        if self.functions.contains_key(&sig.name) {
+            return Err(StaticError::DuplicateFunctionDefinition { name: sig.name.clone() });
+        }
         self.functions.insert(sig.name.clone(), sig);
+        Ok(())
     }
 
     pub fn get_function(&self, name: &str) -> Option<&FunctionSignature> {
         self.functions.get(name)
     }
 
-    pub fn register_gate(&mut self, sig: GateSignature) {
+    pub fn register_gate(&mut self, sig: GateSignature) -> Result<(), StaticError> {
+        if self.gates.contains_key(&sig.name) {
+            return Err(StaticError::DuplicateGateDefinition { name: sig.name.clone() });
+        }
         self.gates.insert(sig.name.clone(), sig);
+        Ok(())
     }
 
     pub fn get_gate(&self, name: &str) -> Option<&GateSignature> {

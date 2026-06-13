@@ -187,7 +187,6 @@ pub fn get_default_functions() -> HashMap<String, Function> {
     functions.insert("sizeof".to_string(), Function::BuiltIn(BuiltInFunction::Sizeof));
 
     functions.insert("U".to_string(),  Function::BuiltInGate(BuiltInGate::U));
-    functions.insert("CX".to_string(), Function::BuiltInGate(BuiltInGate::Cx));
     functions.insert("gphase".to_string(), Function::BuiltInGate(BuiltInGate::GPhase));
 
     functions

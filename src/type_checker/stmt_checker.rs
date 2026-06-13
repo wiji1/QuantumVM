@@ -472,7 +472,7 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
         params: param_types.clone(),
         return_type: ret_type.clone(),
     };
-    checker.env_mut().register_function(signature);
+    checker.env_mut().register_function(signature)?;
     checker.set_function_context(name.to_string(), ret_type.clone());
 
     checker.env_mut().push_scope();
@@ -513,7 +513,7 @@ pub(crate) fn check_gate_def_impl(
         params: params.to_vec(),
         qubits: qubits.to_vec(),
     };
-    checker.env_mut().register_gate(signature);
+    checker.env_mut().register_gate(signature)?;
     
     if !check_body { return Ok(()); }
 

@@ -10,6 +10,8 @@ pub enum RuntimeError {
     UnsupportedType,
     ConstReassignment(String),
     DuplicateVariable(String),
+    DuplicateFunction(String),
+    DuplicateGate(String),
     IndexOutOfBounds(usize, usize),
     InvalidArgCount(usize, usize),
     UndefinedFunction(String),

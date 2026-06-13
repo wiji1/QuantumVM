@@ -276,6 +276,9 @@ impl Interpreter {
                 Ok(ControlFlow::Return(value))
             },
             Stmt::GateDef { name, params, qubits, body } => {
+                if self.functions.contains_key(name) {
+                    return Err(RuntimeError::DuplicateGate(name.to_string()));
+                }
                 self.functions.insert(name.to_string(), Function::Gate {
                     params: params.clone(),
                     qubits: qubits.clone(),
@@ -291,6 +294,9 @@ impl Interpreter {
                 }
             },
             Stmt::Def { name, params, return_type, body } => {
+                if self.functions.contains_key(name) {
+                    return Err(RuntimeError::DuplicateFunction(name.to_string()));
+                }
                 self.functions.insert(name.clone(), Function::UserDefined {
                     params: params.clone(),
                     return_type: return_type.clone(),
