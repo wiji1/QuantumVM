@@ -90,6 +90,10 @@ pub enum StaticError {
         name: String,
     },
 
+    DuplicateVariableDefinition {
+        name: String
+    },
+
     Other {
         message: String,
     },
@@ -200,6 +204,9 @@ impl fmt::Display for StaticError {
             }
             StaticError::ClassicalOpOnQuantum { name } => {
                 write!(f, "Cannot apply classical operation to quantum variable: {name}")
+            }
+            StaticError::DuplicateVariableDefinition { name } => {
+                write!(f, "Duplicate variable definition: {name}")
             }
             StaticError::Other { message } => {
                 write!(f, "{message}")

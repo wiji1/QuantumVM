@@ -1,5 +1,6 @@
 use crate::type_checker::type_repr::Type;
 use std::collections::{HashMap, HashSet};
+use crate::type_checker::static_error::StaticError;
 
 #[derive(Debug, Clone)]
 pub struct TypeBinding {
@@ -40,23 +41,25 @@ impl TypeEnv {
 
         env.register_builtin_functions();
         env.register_builtin_gates();
-        env.register_builtin_constants();
+        env.register_builtin_constants().expect("Failed to register builtin constants");
 
         env
     }
 
-    fn register_builtin_constants(&mut self) {
-        self.define("pi".to_string(), Type::Float(None), true);
-        self.define("π".to_string(), Type::Float(None), true);
+    fn register_builtin_constants(&mut self) -> Result<(), StaticError> {
+        self.define("pi".to_string(), Type::Float(None), true)?;
+        self.define("π".to_string(), Type::Float(None), true)?;
 
-        self.define("tau".to_string(), Type::Float(None), true);
-        self.define("τ".to_string(), Type::Float(None), true);
+        self.define("tau".to_string(), Type::Float(None), true)?;
+        self.define("τ".to_string(), Type::Float(None), true)?;
 
-        self.define("euler".to_string(), Type::Float(None), true);
-        self.define("ℯ".to_string(), Type::Float(None), true);
+        self.define("euler".to_string(), Type::Float(None), true)?;
+        self.define("ℯ".to_string(), Type::Float(None), true)?;
 
-        self.define("im".to_string(), Type::Complex(Box::new(Type::Float(None))), true);
-        self.define("ⅈ".to_string(), Type::Complex(Box::new(Type::Float(None))), true);
+        self.define("im".to_string(), Type::Complex(Box::new(Type::Float(None))), true)?;
+        self.define("ⅈ".to_string(), Type::Complex(Box::new(Type::Float(None))), true)?;
+        
+        Ok(())
     }
 
     fn register_builtin_functions(&mut self) {
@@ -130,7 +133,7 @@ impl TypeEnv {
         if self.scopes.len() > 1 { self.scopes.pop(); }
     }
 
-    pub fn define(&mut self, name: String, ty: Type, is_const: bool) {
+    pub fn define(&mut self, name: String, ty: Type, is_const: bool) -> Result<(), StaticError> {
         let binding = TypeBinding {
             ty,
             is_const,
@@ -138,9 +141,15 @@ impl TypeEnv {
         };
 
         if let Some(scope) = self.scopes.last_mut() {
+            if scope.contains_key(&name) {
+                return Err(StaticError::DuplicateVariableDefinition { name })
+            }
+
             scope.insert(name.clone(), binding);
             if is_const { self.constants.insert(name); }
         }
+
+        Ok(())
     }
 
     pub fn define_uninitialized(&mut self, name: String, ty: Type, is_const: bool) {

@@ -29,7 +29,7 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
 
         Stmt::IoDecl { direction: _, ty, name } => {
             let var_type = Type::from_classical_type(ty);
-            checker.env_mut().define(name.clone(), var_type, false);
+            checker.env_mut().define(name.clone(), var_type, false)?;
             Ok(())
         }
 
@@ -134,7 +134,7 @@ fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>
         None => Type::Qubit(None),
     };
 
-    checker.env_mut().define(name.to_string(), qubit_type, false);
+    checker.env_mut().define(name.to_string(), qubit_type, false)?;
     Ok(())
 }
 
@@ -155,7 +155,7 @@ fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &st
             }
         }
 
-        checker.env_mut().define(name.to_string(), var_type, false);
+        checker.env_mut().define(name.to_string(), var_type, false)?;
     } else {
         checker.env_mut().define_uninitialized(name.to_string(), var_type, false);
     }
@@ -199,7 +199,7 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
         }
     }
 
-    checker.env_mut().define(name.to_string(), array_type, false);
+    checker.env_mut().define(name.to_string(), array_type, false)?;
     Ok(())
 }
 
@@ -218,7 +218,7 @@ fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, i
         }
     }
 
-    checker.env_mut().define(name.to_string(), var_type, true);
+    checker.env_mut().define(name.to_string(), var_type, true)?;
     Ok(())
 }
 
@@ -251,7 +251,7 @@ fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Ex
 
 fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), StaticError> {
     let value_type = checker.check_expression(value)?;
-    checker.env_mut().define(name.to_string(), value_type, false);
+    checker.env_mut().define(name.to_string(), value_type, false)?;
     Ok(())
 }
 
@@ -396,7 +396,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
     }
 
     checker.env_mut().push_scope();
-    checker.env_mut().define(var.to_string(), var_type, false);
+    checker.env_mut().define(var.to_string(), var_type, false)?;
     for stmt in body {
         check_statement(checker, stmt)?;
     }
@@ -477,7 +477,7 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
 
     checker.env_mut().push_scope();
     for (param, param_type) in params.iter().zip(param_types.iter()) {
-        checker.env_mut().define(param.name.clone(), param_type.clone(), false);
+        checker.env_mut().define(param.name.clone(), param_type.clone(), false)?;
     }
 
     for stmt in body { check_statement(checker, stmt)?; }
@@ -520,11 +520,11 @@ pub(crate) fn check_gate_def_impl(
     checker.env_mut().push_scope();
 
     for param in params {
-        checker.env_mut().define(param.clone(), Type::Angle(None), false);
+        checker.env_mut().define(param.clone(), Type::Angle(None), false)?;
     }
 
     for qubit in qubits {
-        checker.env_mut().define(qubit.clone(), Type::Qubit(None), false);
+        checker.env_mut().define(qubit.clone(), Type::Qubit(None), false)?;
     }
 
     for stmt in body {
