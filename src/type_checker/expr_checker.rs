@@ -1,13 +1,13 @@
 use crate::parser::expression::Expr;
 use crate::parser::supporting_types::IndexedIdent;
 use crate::type_checker::coercion::coerce_binary_operands;
-use crate::type_checker::type_error::TypeError;
+use crate::type_checker::static_error::StaticError;
 use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
 use Type::*;
 
 impl TypeChecker {
-    pub fn check_expression(&mut self, expr: &Expr) -> Result<Type, TypeError> {
+    pub fn check_expression(&mut self, expr: &Expr) -> Result<Type, StaticError> {
         match expr {
             Expr::Int(_) => Ok(Int(None)),
             Expr::Float(_) => Ok(Float(None)),
@@ -45,7 +45,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_array_expr(&mut self, elements: &[Expr]) -> Result<Type, TypeError> {
+    fn check_array_expr(&mut self, elements: &[Expr]) -> Result<Type, StaticError> {
         if elements.is_empty() {
             return Ok(Array {
                 element_type: Box::new(Unknown),
@@ -58,7 +58,7 @@ impl TypeChecker {
         for elem in &elements[1..] {
             let elem_type = self.check_expression(elem)?;
             if !elem_type.is_compatible_with(&first_type) {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: first_type.clone(),
                     found: elem_type,
                     context: "array element".to_string(),
@@ -72,14 +72,14 @@ impl TypeChecker {
         })
     }
 
-    pub fn check_identifier(&self, name: &str) -> Result<Type, TypeError> {
+    pub fn check_identifier(&self, name: &str) -> Result<Type, StaticError> {
         self.env().get_type(name)
-            .ok_or_else(|| TypeError::UndefinedVariable {
+            .ok_or_else(|| StaticError::UndefinedVariable {
                 name: name.to_string(),
             })
     }
 
-    pub fn check_indexed_ident(&mut self, indexed: &IndexedIdent) -> Result<Type, TypeError> {
+    pub fn check_indexed_ident(&mut self, indexed: &IndexedIdent) -> Result<Type, StaticError> {
         let base_type = self.check_identifier(&indexed.name)?;
 
         if indexed.indices.is_empty() { return Ok(base_type); }
@@ -87,14 +87,14 @@ impl TypeChecker {
         for index in &indexed.indices {
             let index_type = self.check_expression(index)?;
             if !index_type.is_integer() && !matches!(index_type, Range) {
-                return Err(TypeError::NonIntegerIndex { index_type });
+                return Err(StaticError::NonIntegerIndex { index_type });
             }
         }
 
         match base_type {
             Array { element_type, dimensions } => {
                 if indexed.indices.len() > dimensions.len() {
-                    return Err(TypeError::DimensionMismatch {
+                    return Err(StaticError::DimensionMismatch {
                         expected: dimensions.len(),
                         found: indexed.indices.len(),
                     });
@@ -113,7 +113,7 @@ impl TypeChecker {
             Bit(Some(_)) => {
                 if indexed.indices.len() == 1 { Ok(Bit(Some(1))) }
                 else {
-                    Err(TypeError::DimensionMismatch {
+                    Err(StaticError::DimensionMismatch {
                         expected: 1,
                         found: indexed.indices.len(),
                     })
@@ -123,28 +123,28 @@ impl TypeChecker {
             Qubit(Some(_)) | Qubit(None) => {
                 if indexed.indices.len() == 1 { Ok(Qubit(None)) }
                 else {
-                    Err(TypeError::DimensionMismatch {
+                    Err(StaticError::DimensionMismatch {
                         expected: 1,
                         found: indexed.indices.len(),
                     })
                 }
             }
 
-            _ => Err(TypeError::InvalidArrayAccess { type_: base_type }),
+            _ => Err(StaticError::InvalidArrayAccess { type_: base_type }),
         }
     }
 
-    fn check_unary(&mut self, op: &crate::parser::supporting_types::UnaryOp, expr: &Expr) -> Result<Type, TypeError> {
+    fn check_unary(&mut self, op: &crate::parser::supporting_types::UnaryOp, expr: &Expr) -> Result<Type, StaticError> {
         let expr_type = self.check_expression(expr)?;
 
         expr_type.unary_result_type(op)
-            .ok_or_else(|| TypeError::UnaryOpTypeMismatch {
+            .ok_or_else(|| StaticError::UnaryOpTypeMismatch {
                 op: format!("{op:?}"),
                 operand: expr_type,
             })
     }
 
-    fn check_binary(&mut self, op: &crate::parser::supporting_types::BinaryOp, lhs: &Expr, rhs: &Expr) -> Result<Type, TypeError> {
+    fn check_binary(&mut self, op: &crate::parser::supporting_types::BinaryOp, lhs: &Expr, rhs: &Expr) -> Result<Type, StaticError> {
         let lhs_type = self.check_expression(lhs)?;
         let rhs_type = self.check_expression(rhs)?;
 
@@ -160,21 +160,21 @@ impl TypeChecker {
             }
         }
 
-        Err(TypeError::BinaryOpTypeMismatch {
+        Err(StaticError::BinaryOpTypeMismatch {
             op: format!("{op:?}"),
             lhs: lhs_type,
             rhs: rhs_type,
         })
     }
 
-    fn check_call(&mut self, name: &str, args: &[Expr]) -> Result<Type, TypeError> {
+    fn check_call(&mut self, name: &str, args: &[Expr]) -> Result<Type, StaticError> {
         let func_sig = self.env().get_function(name)
-            .ok_or_else(|| TypeError::UndefinedFunction {
+            .ok_or_else(|| StaticError::UndefinedFunction {
                 name: name.to_string(),
             })?.clone();
 
         if name != "sizeof" && func_sig.params.len() != args.len() {
-            return Err(TypeError::ArityMismatch {
+            return Err(StaticError::ArityMismatch {
                 name: name.to_string(),
                 expected: func_sig.params.len(),
                 found: args.len(),
@@ -191,7 +191,7 @@ impl TypeChecker {
                     continue;
                 }
 
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: param_type.clone(),
                     found: arg_type,
                     context: format!("function call '{name}', argument {}", i + 1),
@@ -202,12 +202,12 @@ impl TypeChecker {
         Ok(func_sig.return_type.clone())
     }
 
-    fn check_cast(&mut self, target_ty: &crate::parser::supporting_types::ClassicalType, expr: &Expr) -> Result<Type, TypeError> {
+    fn check_cast(&mut self, target_ty: &crate::parser::supporting_types::ClassicalType, expr: &Expr) -> Result<Type, StaticError> {
         let expr_type = self.check_expression(expr)?;
         let target_type = Type::from_classical_type(target_ty);
 
         if !is_valid_cast(&expr_type, &target_type) {
-            return Err(TypeError::InvalidCast {
+            return Err(StaticError::InvalidCast {
                 from: expr_type,
                 to: target_type,
             });
@@ -216,11 +216,11 @@ impl TypeChecker {
         Ok(target_type)
     }
 
-    fn check_range(&mut self, start: &Option<Box<Expr>>, stop: &Option<Box<Expr>>, step: &Option<Box<Expr>>) -> Result<Type, TypeError> {
+    fn check_range(&mut self, start: &Option<Box<Expr>>, stop: &Option<Box<Expr>>, step: &Option<Box<Expr>>) -> Result<Type, StaticError> {
         if let Some(start_expr) = start {
             let start_type = self.check_expression(start_expr)?;
             if !start_type.is_integer() {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Int(None),
                     found: start_type,
                     context: "range start".to_string(),
@@ -231,7 +231,7 @@ impl TypeChecker {
         if let Some(stop_expr) = stop {
             let stop_type = self.check_expression(stop_expr)?;
             if !stop_type.is_integer() {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Int(None),
                     found: stop_type,
                     context: "range stop".to_string(),
@@ -242,7 +242,7 @@ impl TypeChecker {
         if let Some(step_expr) = step {
             let step_type = self.check_expression(step_expr)?;
             if !step_type.is_integer() {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Int(None),
                     found: step_type,
                     context: "range step".to_string(),
@@ -253,7 +253,7 @@ impl TypeChecker {
         Ok(Range)
     }
 
-    fn check_measure(&mut self, operand: &crate::parser::supporting_types::GateOperand) -> Result<Type, TypeError> {
+    fn check_measure(&mut self, operand: &crate::parser::supporting_types::GateOperand) -> Result<Type, StaticError> {
         use crate::parser::supporting_types::GateOperand;
 
         match operand {
@@ -263,7 +263,7 @@ impl TypeChecker {
                 match qubit_type {
                     Qubit(None) => Ok(Bit(Some(1))),
                     Qubit(Some(size)) => Ok(Bit(Some(size))),
-                    _ => Err(TypeError::TypeMismatch {
+                    _ => Err(StaticError::TypeMismatch {
                         expected: Qubit(None),
                         found: qubit_type,
                         context: "measure operand".to_string(),

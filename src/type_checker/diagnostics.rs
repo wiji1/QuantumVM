@@ -1,4 +1,4 @@
-use crate::type_checker::type_error::TypeError;
+use crate::type_checker::static_error::StaticError;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl Diagnostic {
         self
     }
 
-    pub fn from_type_error(error: TypeError) -> Self {
+    pub fn from_type_error(error: StaticError) -> Self {
         Self::error(error.to_string())
     }
 }
@@ -80,7 +80,7 @@ impl DiagnosticCollector {
         self.diagnostics.push(diagnostic);
     }
 
-    pub fn add_error(&mut self, error: TypeError) {
+    pub fn add_error(&mut self, error: StaticError) {
         self.diagnostics.push(Diagnostic::from_type_error(error));
     }
 

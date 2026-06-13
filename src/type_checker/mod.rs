@@ -1,6 +1,6 @@
 pub mod type_repr;
 pub mod type_env;
-pub mod type_error;
+pub mod static_error;
 pub mod diagnostics;
 pub mod coercion;
 pub mod expr_checker;
@@ -9,7 +9,7 @@ pub mod stmt_checker;
 use crate::parser::Program;
 use crate::type_checker::diagnostics::{Diagnostic, DiagnosticCollector};
 use crate::type_checker::type_env::TypeEnv;
-use crate::type_checker::type_error::TypeError;
+use crate::type_checker::static_error::StaticError;
 
 #[derive(Debug, Clone)]
 pub struct TypeCheckConfig {
@@ -74,7 +74,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_statement(&mut self, stmt: &crate::parser::statement::Stmt) -> Result<(), TypeError> {
+    fn check_statement(&mut self, stmt: &crate::parser::statement::Stmt) -> Result<(), StaticError> {
         stmt_checker::check_statement(self, stmt)
     }
 

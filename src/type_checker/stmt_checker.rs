@@ -3,13 +3,13 @@ use {ForIter, GateOperand, Param};
 use crate::parser::expression::Expr;
 use crate::parser::supporting_types::*;
 use crate::type_checker::type_env::{FunctionSignature, GateSignature};
-use crate::type_checker::type_error::TypeError;
+use crate::type_checker::static_error::StaticError;
 use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
-pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), TypeError> {
+pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), StaticError> {
     match stmt {
         Stmt::QuantumDecl { name, size } => {
             check_quantum_decl(checker, name, size)
@@ -116,12 +116,12 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Typ
     }
 }
 
-fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>) -> Result<(), TypeError> {
+fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>) -> Result<(), StaticError> {
     let qubit_type = match size {
         Some(expr) => {
             let size_type = checker.check_expression(expr)?;
             if !size_type.is_integer() {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Type::Int(None),
                     found: size_type,
                     context: "qubit declaration size".to_string(),
@@ -138,7 +138,7 @@ fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>
     Ok(())
 }
 
-fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Option<Expr>) -> Result<(), TypeError> {
+fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Option<Expr>) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
 
     if let Some(init_expr) = init {
@@ -147,7 +147,7 @@ fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &st
         if !init_type.is_compatible_with(&var_type) {
             if checker.config().allow_implicit_casts && init_type.can_coerce_to(&var_type) {
             } else {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: var_type,
                     found: init_type,
                     context: format!("variable declaration '{name}'"),
@@ -163,14 +163,14 @@ fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &st
     Ok(())
 }
 
-fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, size: &[Expr], init: &Option<Expr>) -> Result<(), TypeError> {
+fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, size: &[Expr], init: &Option<Expr>) -> Result<(), StaticError> {
     let element_type = Type::from_classical_type(ty);
 
     let mut dimensions = Vec::new();
     for size_expr in size {
         let size_type = checker.check_expression(size_expr)?;
         if !size_type.is_integer() {
-            return Err(TypeError::TypeMismatch {
+            return Err(StaticError::TypeMismatch {
                 expected: Type::Int(None),
                 found: size_type,
                 context: "array size".to_string(),
@@ -191,7 +191,7 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
         let init_type = checker.check_expression(init_expr)?;
 
         if !init_type.is_compatible_with(&array_type) {
-            return Err(TypeError::TypeMismatch {
+            return Err(StaticError::TypeMismatch {
                 expected: array_type,
                 found: init_type,
                 context: format!("array declaration '{name}'"),
@@ -203,14 +203,14 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
     Ok(())
 }
 
-fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Expr) -> Result<(), TypeError> {
+fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Expr) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
     let init_type = checker.check_expression(init)?;
 
     if !init_type.is_compatible_with(&var_type) {
         if checker.config().allow_implicit_casts && init_type.can_coerce_to(&var_type) {
         } else {
-            return Err(TypeError::TypeMismatch {
+            return Err(StaticError::TypeMismatch {
                 expected: var_type,
                 found: init_type,
                 context: format!("constant declaration '{name}'"),
@@ -222,9 +222,9 @@ fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, i
     Ok(())
 }
 
-fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Expr) -> Result<(), TypeError> {
+fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Expr) -> Result<(), StaticError> {
     if checker.env().is_const(&target.name) {
-        return Err(TypeError::AssignmentToConst {
+        return Err(StaticError::AssignmentToConst {
             name: target.name.clone(),
         });
     }
@@ -238,7 +238,7 @@ fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Ex
     if !value_type.is_compatible_with(&target_type) {
         if checker.config().allow_implicit_casts && value_type.can_coerce_to(&target_type) {
         } else {
-            return Err(TypeError::TypeMismatch {
+            return Err(StaticError::TypeMismatch {
                 expected: target_type,
                 found: value_type,
                 context: format!("assignment to '{}'", target.name),
@@ -249,17 +249,17 @@ fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Ex
     Ok(())
 }
 
-fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), TypeError> {
+fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), StaticError> {
     let value_type = checker.check_expression(value)?;
     checker.env_mut().define(name.to_string(), value_type, false);
     Ok(())
 }
 
-fn check_if(checker: &mut TypeChecker, cond: &Expr, then: &[Stmt], else_: &Option<Vec<Stmt>>) -> Result<(), TypeError> {
+fn check_if(checker: &mut TypeChecker, cond: &Expr, then: &[Stmt], else_: &Option<Vec<Stmt>>) -> Result<(), StaticError> {
     let cond_type = checker.check_expression(cond)?;
 
     if !cond_type.can_coerce_to(&Type::Bool) {
-        return Err(TypeError::NonBooleanCondition { found: cond_type });
+        return Err(StaticError::NonBooleanCondition { found: cond_type });
     }
 
     checker.env_mut().push_scope();
@@ -279,14 +279,14 @@ fn check_if(checker: &mut TypeChecker, cond: &Expr, then: &[Stmt], else_: &Optio
     Ok(())
 }
 
-fn check_switch(checker: &mut TypeChecker, expr: &Expr, cases: &[SwitchCase]) -> Result<(), TypeError> {
+fn check_switch(checker: &mut TypeChecker, expr: &Expr, cases: &[SwitchCase]) -> Result<(), StaticError> {
     let switch_type = checker.check_expression(expr)?;
 
     for case in cases {
         for value in &case.values {
             let value_type = checker.check_expression(value)?;
             if !value_type.is_compatible_with(&switch_type) {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: switch_type,
                     found: value_type,
                     context: "switch case".to_string(),
@@ -304,7 +304,7 @@ fn check_switch(checker: &mut TypeChecker, expr: &Expr, cases: &[SwitchCase]) ->
     Ok(())
 }
 
-fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &ForIter, body: &[Stmt]) -> Result<(), TypeError> {
+fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &ForIter, body: &[Stmt]) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
 
     match iter {
@@ -312,7 +312,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             if let Some(start_expr) = start {
                 let start_type = checker.check_expression(start_expr)?;
                 if !start_type.is_integer() {
-                    return Err(TypeError::TypeMismatch {
+                    return Err(StaticError::TypeMismatch {
                         expected: Type::Int(None),
                         found: start_type,
                         context: "for loop range start".to_string(),
@@ -323,7 +323,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             if let Some(stop_expr) = stop {
                 let stop_type = checker.check_expression(stop_expr)?;
                 if !stop_type.is_integer() {
-                    return Err(TypeError::TypeMismatch {
+                    return Err(StaticError::TypeMismatch {
                         expected: Type::Int(None),
                         found: stop_type,
                         context: "for loop range stop".to_string(),
@@ -334,7 +334,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             if let Some(step_expr) = step {
                 let step_type = checker.check_expression(step_expr)?;
                 if !step_type.is_integer() {
-                    return Err(TypeError::TypeMismatch {
+                    return Err(StaticError::TypeMismatch {
                         expected: Type::Int(None),
                         found: step_type,
                         context: "for loop range step".to_string(),
@@ -343,7 +343,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             }
 
             if !var_type.is_integer() {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Type::Int(None),
                     found: var_type,
                     context: "for loop variable".to_string(),
@@ -355,7 +355,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             for expr in exprs {
                 let expr_type = checker.check_expression(expr)?;
                 if !expr_type.is_compatible_with(&var_type) {
-                    return Err(TypeError::TypeMismatch {
+                    return Err(StaticError::TypeMismatch {
                         expected: var_type,
                         found: expr_type,
                         context: "for loop set element".to_string(),
@@ -370,7 +370,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
             match expr_type {
                 Type::Array { element_type, .. } => {
                     if !element_type.is_compatible_with(&var_type) {
-                        return Err(TypeError::TypeMismatch {
+                        return Err(StaticError::TypeMismatch {
                             expected: var_type,
                             found: *element_type,
                             context: "for loop array element".to_string(),
@@ -379,7 +379,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
                 }
                 Type::Range => {
                     if !var_type.is_integer() {
-                        return Err(TypeError::TypeMismatch {
+                        return Err(StaticError::TypeMismatch {
                             expected: Type::Int(None),
                             found: var_type,
                             context: "for loop variable (range iteration)".to_string(),
@@ -387,7 +387,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
                     }
                 }
                 _ => {
-                    return Err(TypeError::Other {
+                    return Err(StaticError::Other {
                         message: format!("Cannot iterate over type {}", expr_type.display_name()),
                     });
                 }
@@ -405,11 +405,11 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
     Ok(())
 }
 
-fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<(), TypeError> {
+fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<(), StaticError> {
     let cond_type = checker.check_expression(cond)?;
 
     if !cond_type.can_coerce_to(&Type::Bool) {
-        return Err(TypeError::NonBooleanCondition { found: cond_type });
+        return Err(StaticError::NonBooleanCondition { found: cond_type });
     }
 
     checker.env_mut().push_scope();
@@ -421,9 +421,9 @@ fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<
     Ok(())
 }
 
-fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), TypeError> {
+fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), StaticError> {
     let func_context = checker.current_function()
-        .ok_or_else(|| TypeError::Other {
+        .ok_or_else(|| StaticError::Other {
             message: "Return statement outside of function".to_string(),
         })?;
 
@@ -431,12 +431,12 @@ fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), Ty
 
     match (expr, &expected_type) {
         (None, Type::Void) => Ok(()),
-        (None, _) => Err(TypeError::ReturnTypeMismatch {
+        (None, _) => Err(StaticError::ReturnTypeMismatch {
             expected: expected_type,
             found: Type::Void,
         }),
         (Some(return_expr), Type::Void) => {
-            Err(TypeError::ReturnTypeMismatch {
+            Err(StaticError::ReturnTypeMismatch {
                 expected: Type::Void,
                 found: checker.check_expression(return_expr)?,
             })
@@ -448,7 +448,7 @@ fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), Ty
                 if checker.config().allow_implicit_casts && return_type.can_coerce_to(&expected_type) {
                     Ok(())
                 } else {
-                    Err(TypeError::ReturnTypeMismatch {
+                    Err(StaticError::ReturnTypeMismatch {
                         expected: expected_type,
                         found: return_type,
                     })
@@ -458,7 +458,7 @@ fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), Ty
     }
 }
 
-pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), TypeError> {
+pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), StaticError> {
     let param_types: Vec<Type> = params.iter()
         .map(|p| Type::from_param_type(&p.ty))
         .collect();
@@ -496,7 +496,7 @@ fn check_gate_def(
     params: &[String],
     qubits: &[String],
     body: &[Stmt],
-) -> Result<(), TypeError> {
+) -> Result<(), StaticError> {
     check_gate_def_impl(checker, name, params, qubits, body, true)
 }
 
@@ -507,7 +507,7 @@ pub(crate) fn check_gate_def_impl(
     qubits: &[String],
     body: &[Stmt],
     check_body: bool,
-) -> Result<(), TypeError> {
+) -> Result<(), StaticError> {
     let signature = GateSignature {
         name: name.to_string(),
         params: params.to_vec(),
@@ -537,14 +537,14 @@ pub(crate) fn check_gate_def_impl(
 }
 
 //TODO: Allow this to support functions with gate-compatible signatures
-fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubits: &[GateOperand]) -> Result<(), TypeError> {
+fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubits: &[GateOperand]) -> Result<(), StaticError> {
     let gate_sig = checker.env().get_gate(name)
-        .ok_or_else(|| TypeError::UndefinedGate {
+        .ok_or_else(|| StaticError::UndefinedGate {
             name: name.to_string(),
         })?;
 
     if gate_sig.params.len() != params.len() {
-        return Err(TypeError::ArityMismatch {
+        return Err(StaticError::ArityMismatch {
             name: name.to_string(),
             expected: gate_sig.params.len(),
             found: params.len(),
@@ -555,20 +555,20 @@ fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubit
 
     if expected_qubit_count == 0 {
         if !qubits.is_empty() {
-            return Err(TypeError::ArityMismatch {
+            return Err(StaticError::ArityMismatch {
                 name: format!("{name} (qubits)"),
                 expected: 0,
                 found: qubits.len(),
             });
         }
     } else if qubits.is_empty() {
-        return Err(TypeError::ArityMismatch {
+        return Err(StaticError::ArityMismatch {
             name: format!("{name} (qubits)"),
             expected: expected_qubit_count,
             found: 0,
         });
     } else if qubits.len() % expected_qubit_count != 0 {
-        return Err(TypeError::Other {
+        return Err(StaticError::Other {
             message: format!(
                 "Gate '{}' expects {} qubit(s), but {} were provided. For broadcasting, the number of qubits must be a multiple of {}.",
                 name, expected_qubit_count, qubits.len(), expected_qubit_count
@@ -579,7 +579,7 @@ fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubit
     for param in params {
         let param_type = checker.check_expression(param)?;
         if !param_type.is_numeric() {
-            return Err(TypeError::TypeMismatch {
+            return Err(StaticError::TypeMismatch {
                 expected: Type::Angle(None),
                 found: param_type,
                 context: format!("gate call '{name}' parameter"),
@@ -594,12 +594,12 @@ fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubit
     Ok(())
 }
 
-fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Result<(), TypeError> {
+fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Result<(), StaticError> {
     match operand {
         GateOperand::Ident(indexed) => {
             let qubit_type = checker.check_indexed_ident(indexed)?;
             if !matches!(qubit_type, Type::Qubit(_)) {
-                return Err(TypeError::TypeMismatch {
+                return Err(StaticError::TypeMismatch {
                     expected: Type::Qubit(None),
                     found: qubit_type,
                     context: "gate operand".to_string(),
@@ -611,11 +611,11 @@ fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Resu
     }
 }
 
-fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), TypeError> {
+fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), StaticError> {
     let content = if path == "stdgates.inc" {
         include_str!("../lib/stdgates.inc").to_string()
     } else {
-        std::fs::read_to_string(path).map_err(|_| TypeError::Other {
+        std::fs::read_to_string(path).map_err(|_| StaticError::Other {
             message: format!("Failed to read include file: {path}"),
         })?
     };
@@ -623,13 +623,13 @@ fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), TypeError>
     check_include_from_src(checker, &path.to_string(), &content)
 }
 
-fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &String) -> Result<(), TypeError> {
+fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &String) -> Result<(), StaticError> {
     let mut lexer = Lexer::new(content.to_string());
     lexer.start();
 
     let mut parser = Parser::new(lexer.tokens);
     let program = parser.start(false).map_err(|e| {
-        TypeError::Other {
+        StaticError::Other {
             message: format!("Failed to parse include file {path}: {e:?}"),
         }
     })?;
