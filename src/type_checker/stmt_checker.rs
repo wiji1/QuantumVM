@@ -251,7 +251,7 @@ fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Ex
 
 fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), StaticError> {
     let value_type = checker.check_expression(value)?;
-    checker.env_mut().define(name.to_string(), value_type, false)?;
+    checker.env_mut().define(name.to_string(), value_type, true)?;
     Ok(())
 }
 

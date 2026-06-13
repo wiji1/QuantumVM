@@ -172,13 +172,12 @@ impl Interpreter {
         self.pop_scope();
     }
 
-    fn define(&mut self, name: String, value: Value) -> Result<ControlFlow, RuntimeError> {
-        if self.constants.contains(&name) {
-            if self.scopes.last().unwrap().contains_key(&name) {
-                return Err(RuntimeError::ConstReassignment(name));
-            }
+    fn define(&mut self, name: String, value: Value, const_decl: bool) -> Result<ControlFlow, RuntimeError> {
+        if self.scopes.last().unwrap().contains_key(&name) {
+            return Err(RuntimeError::DuplicateVariable(name));
         }
 
+        if const_decl { self.constants.insert(name.to_string()); }
         self.scopes.last_mut().unwrap().insert(name, value);
         Ok(ControlFlow::None)
     }
@@ -203,17 +202,17 @@ impl Interpreter {
     }
 
     fn define_default_operations(&mut self) -> Result<(), RuntimeError> {
-        self.define("pi".to_string(), Value::Float(std::f64::consts::PI))?;
-        self.define("π".to_string(), Value::Float(std::f64::consts::PI))?;
+        self.define("pi".to_string(), Value::Float(std::f64::consts::PI), true)?;
+        self.define("π".to_string(), Value::Float(std::f64::consts::PI), true)?;
 
-        self.define("euler".to_string(), Value::Float(std::f64::consts::E))?;
-        self.define("ℯ".to_string(), Value::Float(std::f64::consts::E))?;
+        self.define("euler".to_string(), Value::Float(std::f64::consts::E), true)?;
+        self.define("ℯ".to_string(), Value::Float(std::f64::consts::E), true)?;
 
-        self.define("tau".to_string(), Value::Float(std::f64::consts::TAU))?;
-        self.define("τ".to_string(), Value::Float(std::f64::consts::TAU))?;
+        self.define("tau".to_string(), Value::Float(std::f64::consts::TAU), true)?;
+        self.define("τ".to_string(), Value::Float(std::f64::consts::TAU), true)?;
 
-        self.define("im".to_string(), Value::Complex(0.0, 1.0))?;
-        self.define("ⅈ".to_string(), Value::Complex(0.0, 1.0))?;
+        self.define("im".to_string(), Value::Complex(0.0, 1.0), true)?;
+        self.define("ⅈ".to_string(), Value::Complex(0.0, 1.0), true)?;
 
         Ok(())
     }
@@ -341,7 +340,7 @@ impl Interpreter {
         let coerced_value = coerce_value(init_value, &target_type)
             .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
 
-        self.define(name.to_string(), coerced_value)?;
+        self.define(name.to_string(), coerced_value, false)?;
 
         Ok(ControlFlow::None)
     }
@@ -368,7 +367,7 @@ impl Interpreter {
             None => self.default_array(ty, &dimensions)?
         };
 
-        self.define(name.clone(), value)?;
+        self.define(name.clone(), value, false)?;
         Ok(ControlFlow::None)
     }
 
@@ -388,8 +387,7 @@ impl Interpreter {
         };
 
         let init_value = self.evaluate_expression(init)?;
-        self.define(name.to_string(), init_value)?;
-        self.constants.insert(name.to_string());
+        self.define(name.to_string(), init_value, true)?;
 
         Ok(ControlFlow::None)
     }
@@ -903,7 +901,7 @@ impl Interpreter {
                 for expr in exprs.iter() {
                     self.push_scope();
                     let evaluated = self.evaluate_expression(expr)?;
-                    self.define(var.clone(), evaluated)?;
+                    self.define(var.clone(), evaluated, false)?;
                     let flow = self.interpret_statements(body)?;
                     self.pop_scope();
 
@@ -926,7 +924,7 @@ impl Interpreter {
                     _ => return Err(RuntimeError::TypeMismatch("range start must be int".to_string())),
                 };
 
-                self.define(var.clone(), Value::Int(start_int))?;
+                self.define(var.clone(), Value::Int(start_int), false)?;
 
                 let stop_int = match stop {
                     Some(expr) => match self.evaluate_expression(expr)? {
@@ -978,7 +976,7 @@ impl Interpreter {
 
                 for value in values.iter() {
                     self.push_scope();
-                    self.define(var.clone(), value.clone())?;
+                    self.define(var.clone(), value.clone(), false)?;
                     let flow = self.interpret_statements(body)?;
                     self.pop_scope();
 
@@ -1027,7 +1025,7 @@ impl Interpreter {
                             let old = self.qubit_map.insert(param.name.clone(), indices);
                             qubit_params.push((param.name.clone(), old));
                         }
-                        _ => { self.define(param.name.clone(), value)?; }
+                        _ => { self.define(param.name.clone(), value, false)?; }
                     }
                 }
 
@@ -1074,14 +1072,14 @@ impl Interpreter {
                 let value = self.inputs.get(name);
                 match value {
                     Some(value) => {
-                        self.define(name.to_string(), value.clone())?;
+                        self.define(name.to_string(), value.clone(), false)?;
                         Ok(ControlFlow::None)
                     },
                     None => Err(RuntimeError::UndefinedVariable(name.to_string())),
                 }
             }
             IoDirection::Output => {
-                self.define(name.to_string(), ty.get_default_value(ty.get_size())?)?;
+                self.define(name.to_string(), ty.get_default_value(ty.get_size())?, false)?;
                 self.outputs.insert(name.to_string(), ty.get_default_value(ty.get_size())?);
 
                 Ok(ControlFlow::None)
@@ -1285,7 +1283,7 @@ impl Interpreter {
 
             self.push_scope();
             for (pname, pval) in param_names.iter().zip(param_values.iter()) {
-                self.define(pname.clone(), Value::Float(*pval))?;
+                self.define(pname.clone(), Value::Float(*pval), false)?;
             }
             let result = self.interpret_statements(body);
             self.pop_scope();
@@ -1460,12 +1458,12 @@ impl Interpreter {
                     self.qubit_map.insert(name.clone(), flattened_indices);
                     Ok(ControlFlow::None)
                 } else {
-                    self.define(name.clone(), Value::Array(arr))?;
+                    self.define(name.clone(), Value::Array(arr), true)?;
                     Ok(ControlFlow::None)
                 }
             }
             other => {
-                self.define(name.clone(), other)?;
+                self.define(name.clone(), other, true)?;
                 Ok(ControlFlow::None)
             }
         }

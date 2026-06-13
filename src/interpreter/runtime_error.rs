@@ -9,6 +9,7 @@ pub enum RuntimeError {
     InvalidSize,
     UnsupportedType,
     ConstReassignment(String),
+    DuplicateVariable(String),
     IndexOutOfBounds(usize, usize),
     InvalidArgCount(usize, usize),
     UndefinedFunction(String),
