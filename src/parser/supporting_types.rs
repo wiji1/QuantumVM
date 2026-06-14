@@ -12,6 +12,7 @@ pub enum BinaryOp {
     And, Or, Xor, Shl, Shr,
     LogicAnd, LogicOr,
     Eq, Neq, Lt, Gt, Leq, Geq,
+    Concat,
 }
 
 #[derive(Debug, Clone)]

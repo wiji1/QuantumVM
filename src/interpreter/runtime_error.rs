@@ -23,4 +23,5 @@ pub enum RuntimeError {
     DivideByZero,
     NoStateVector,
     RecursionLimit,
+    SelfConcatenation(String),
 }

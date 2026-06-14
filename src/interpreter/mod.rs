@@ -621,6 +621,7 @@ impl Interpreter {
             BinaryOp::Gt  => comparison_op!(lhs_evaluated, rhs_evaluated, >,  expr),
             BinaryOp::Leq => comparison_op!(lhs_evaluated, rhs_evaluated, <=, expr),
             BinaryOp::Geq => comparison_op!(lhs_evaluated, rhs_evaluated, >=, expr),
+            BinaryOp::Concat => self.concatenate_values(&lhs_evaluated, &rhs_evaluated),
         }
     }
 
@@ -657,6 +658,47 @@ impl Interpreter {
             self.assign(&target.name, evaluated)
         } else {
             self.assign_indexed(&target.name, &target.indices, evaluated)
+        }
+    }
+
+    fn concatenate_values(&self, lhs: &Value, rhs: &Value) -> Result<Value, RuntimeError> {
+        match (lhs, rhs) {
+            (Value::Qubit(indices_a), Value::Qubit(indices_b)) => {
+                let set_a: HashSet<_> = indices_a.iter().collect();
+                let set_b: HashSet<_> = indices_b.iter().collect();
+
+                if set_a.intersection(&set_b).count() > 0 {
+                    return Err(RuntimeError::SelfConcatenation(
+                        "Cannot concatenate a qubit register with itself".to_string()
+                    ));
+                }
+
+                let mut result = indices_a.clone();
+                result.extend(indices_b);
+                Ok(Value::Qubit(result))
+            }
+
+            (Value::Bits { value: v1, width: w1 }, Value::Bits { value: v2, width: w2 }) => {
+                let new_width = w1 + w2;
+                if new_width > 64 {
+                    return Err(RuntimeError::UnsupportedOperation(
+                        format!("Bit concatenation exceeds 64-bit limit: {} + {}", w1, w2)
+                    ));
+                }
+
+                let new_value = (v2 << w1) | v1;
+                Ok(Value::Bits { value: new_value, width: new_width })
+            }
+
+            (Value::Array(arr1), Value::Array(arr2)) => {
+                let mut result = arr1.clone();
+                result.extend(arr2.clone());
+                Ok(Value::Array(result))
+            }
+
+            _ => Err(RuntimeError::UnsupportedOperation(
+                format!("Cannot concatenate {:?} and {:?}", lhs, rhs)
+            ))
         }
     }
 
@@ -727,6 +769,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
                 _ => Err(RuntimeError::UnsupportedOperation("**=".to_string()))
             },
+            BinaryOp::Concat => self.concatenate_values(&lhs, &rhs),
             _ => Err(RuntimeError::UnsupportedOperation(format!("{:?}", op)))
         }
     }

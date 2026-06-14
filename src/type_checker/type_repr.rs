@@ -187,6 +187,47 @@ impl Type {
                 else if matches!(self, Bool) && matches!(other, Bool) { Some(Bool) }
                 else { None }
             }
+
+            BinaryOp::Concat => {
+                match (self, other) {
+                    (Qubit(a), Qubit(b)) => {
+                        let new_size = match (a, b) {
+                            (Some(sa), Some(sb)) => Some(sa + sb),
+                            (Some(s), None) | (None, Some(s)) => Some(*s + 1),
+                            (None, None) => Some(2),
+                        };
+                        Some(Qubit(new_size))
+                    }
+
+                    (Bit(a), Bit(b)) => {
+                        let new_width = match (a, b) {
+                            (Some(wa), Some(wb)) => Some(wa + wb),
+                            (Some(w), None) | (None, Some(w)) => Some(*w + 1),
+                            (None, None) => Some(2),
+                        };
+                        Some(Bit(new_width))
+                    }
+
+                    (Array { element_type: e1, dimensions: d1 },
+                     Array { element_type: e2, dimensions: d2 }) => {
+                        if !e1.is_compatible_with(&e2) { return None; }
+
+                        if d1.len() != 1 || d2.len() != 1 { return None; }
+
+                        let new_size = match (d1[0], d2[0]) {
+                            (Some(s1), Some(s2)) => Some(s1 + s2),
+                            _ => None,
+                        };
+
+                        Some(Array {
+                            element_type: e1.clone(),
+                            dimensions: vec![new_size],
+                        })
+                    }
+
+                    _ => None,
+                }
+            }
         }
     }
 

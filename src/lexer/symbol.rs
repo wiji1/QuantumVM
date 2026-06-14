@@ -124,6 +124,7 @@ pub enum CompoundSymbol {
     NotEquals,
     And,
     Or,
+    Concat,
     Arrow
 }
 
@@ -146,6 +147,7 @@ impl TokenTrait for CompoundSymbol {
             ("!=", CompoundSymbol::NotEquals),
             ("&&", CompoundSymbol::And),
             ("||", CompoundSymbol::Or),
+            ("++", CompoundSymbol::Concat),
             ("->", CompoundSymbol::Arrow),
         ];
 
@@ -166,7 +168,8 @@ impl CompoundSymbol {
             CompoundSymbol::Equals => Some((35, 36)),
             CompoundSymbol::NotEquals => Some((35, 36)),
             CompoundSymbol::And => Some((15, 16)),
-            CompoundSymbol::Or => Some((10, 11)),   
+            CompoundSymbol::Or => Some((10, 11)),
+            CompoundSymbol::Concat => Some((52, 53)),
             _ => None
         }
     }
@@ -182,6 +185,7 @@ impl CompoundSymbol {
             CompoundSymbol::NotEquals => Some(BinaryOp::Neq),
             CompoundSymbol::And => Some(BinaryOp::LogicAnd),
             CompoundSymbol::Or => Some(BinaryOp::LogicOr),
+            CompoundSymbol::Concat => Some(BinaryOp::Concat),
             _ => None
         }
     }
