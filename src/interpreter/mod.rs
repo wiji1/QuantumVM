@@ -940,8 +940,6 @@ impl Interpreter {
                     _ => return Err(RuntimeError::TypeMismatch("range start must be int".to_string())),
                 };
 
-                self.define(var.clone(), Value::Int(start_int), false)?;
-
                 let stop_int = match stop {
                     Some(expr) => match self.evaluate_expression(expr)? {
                         Value::Int(i) => i,
@@ -960,11 +958,20 @@ impl Interpreter {
                     _ => return Err(RuntimeError::TypeMismatch("range step must be int".to_string())),
                 };
 
+                self.push_scope();
+                self.define(var.clone(), Value::Int(start_int), false)?;
+
                 loop {
                     let current_int = match self.lookup(var).cloned() {
                         Some(Value::Int(i)) => i,
-                        Some(_) => return Err(RuntimeError::TypeMismatch("range var must be int".to_string())),
-                        None => return Err(RuntimeError::NullPointer),
+                        Some(_) => {
+                            self.pop_scope();
+                            return Err(RuntimeError::TypeMismatch("range var must be int".to_string()));
+                        }
+                        None => {
+                            self.pop_scope();
+                            return Err(RuntimeError::NullPointer);
+                        }
                     };
 
                     if current_int > stop_int { break; }
@@ -978,9 +985,14 @@ impl Interpreter {
                         ControlFlow::None => {}
                         ControlFlow::Break => break,
                         ControlFlow::Continue => continue,
-                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                        ControlFlow::Return(v) => {
+                            self.pop_scope();
+                            return Ok(ControlFlow::Return(v));
+                        }
                     }
                 }
+
+                self.pop_scope();
             }
             ForIter::Expr(expr) => {
                 let evaluated = self.evaluate_expression(expr)?;
