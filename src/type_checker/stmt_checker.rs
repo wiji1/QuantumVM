@@ -396,7 +396,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
     }
 
     checker.env_mut().push_scope();
-    checker.env_mut().define(var.to_string(), var_type, false)?;
+    checker.env_mut().define(var.to_string(), var_type, true)?;
     for stmt in body {
         check_statement(checker, stmt)?;
     }
