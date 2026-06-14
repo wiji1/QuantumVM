@@ -560,9 +560,13 @@ impl Interpreter {
         let lhs_evaluated = self.evaluate_expression(&lhs)?;
         let rhs_evaluated = self.evaluate_expression(&rhs)?;
 
-        let rhs_int = coerce_value(rhs_evaluated.clone(), &Type::Float(None));
-        if let Ok(Value::Float(i)) = rhs_int {
-            if let BinaryOp::Div = op && i == 0.0 { return Err(RuntimeError::DivideByZero) }
+        if matches!(op, BinaryOp::Div | BinaryOp::Mod) {
+            let is_zero = match &rhs_evaluated {
+                Value::Int(i) => *i == 0,
+                Value::Float(f) => *f == 0.0,
+                _ => false,
+            };
+            if is_zero { return Err(RuntimeError::DivideByZero); }
         }
 
         match op {
@@ -570,7 +574,7 @@ impl Interpreter {
             BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr),
             BinaryOp::Mul => numeric_op!(lhs_evaluated, rhs_evaluated, *, expr),
             BinaryOp::Div => match (lhs_evaluated, rhs_evaluated) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
@@ -657,9 +661,13 @@ impl Interpreter {
     }
 
     fn apply_binary_op(&self, op: &BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
-        let rhs_int = coerce_value(rhs.clone(), &Type::Float(None));
-        if let Ok(Value::Float(i)) = rhs_int {
-            if let BinaryOp::Div = op && i == 0.0 { return Err(RuntimeError::DivideByZero) }
+        if matches!(op, BinaryOp::Div | BinaryOp::Mod) {
+            let is_zero = match &rhs {
+                Value::Int(i) => *i == 0,
+                Value::Float(f) => *f == 0.0,
+                _ => false,
+            };
+            if is_zero { return Err(RuntimeError::DivideByZero); }
         }
 
         match op {

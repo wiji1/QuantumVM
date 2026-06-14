@@ -27,7 +27,6 @@ pub fn can_type_coerce(from: &Type, to: &Type) -> bool {
     match (from, to) {
         (Type::Bool, Type::Int(_)) | (Type::Bool, Type::UInt(_)) => true,
         (Type::Bool, Type::Float(_)) => true,
-        (Type::Float(_), Type::Int(_)) => true,
 
         (Type::Bit(Some(1)), Type::Bool) | (Type::Bool, Type::Bit(Some(1))) => true,
         (Type::Bit(None), Type::Bool) | (Type::Bool, Type::Bit(None)) => true,
