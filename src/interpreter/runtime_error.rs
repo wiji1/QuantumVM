@@ -20,6 +20,7 @@ pub enum RuntimeError {
     FileNotFound(String),
     ParseError(ParseError),
     InvalidQubitAccess(String),
+    DivideByZero,
     NoStateVector,
     RecursionLimit,
 }

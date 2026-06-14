@@ -560,6 +560,11 @@ impl Interpreter {
         let lhs_evaluated = self.evaluate_expression(&lhs)?;
         let rhs_evaluated = self.evaluate_expression(&rhs)?;
 
+        let rhs_int = coerce_value(rhs_evaluated.clone(), &Type::Float(None));
+        if let Ok(Value::Float(i)) = rhs_int {
+            if let BinaryOp::Div = op && i == 0.0 { return Err(RuntimeError::DivideByZero) }
+        }
+
         match op {
             BinaryOp::Add => numeric_op!(lhs_evaluated, rhs_evaluated, +, expr),
             BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr),
@@ -652,6 +657,11 @@ impl Interpreter {
     }
 
     fn apply_binary_op(&self, op: &BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+        let rhs_int = coerce_value(rhs.clone(), &Type::Float(None));
+        if let Ok(Value::Float(i)) = rhs_int {
+            if let BinaryOp::Div = op && i == 0.0 { return Err(RuntimeError::DivideByZero) }
+        }
+
         match op {
             BinaryOp::Add => numeric_op!(lhs, rhs, +, "+="),
             BinaryOp::Sub => numeric_op!(lhs, rhs, -, "-="),
