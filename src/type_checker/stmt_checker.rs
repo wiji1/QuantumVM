@@ -612,13 +612,11 @@ fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Resu
 }
 
 fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), StaticError> {
-    let content = if path == "stdgates.inc" {
-        include_str!("../lib/stdgates.inc").to_string()
-    } else {
-        std::fs::read_to_string(path).map_err(|_| StaticError::Other {
-            message: format!("Failed to read include file: {path}"),
-        })?
-    };
+    if path == "stdgates.inc" { return Ok(()) }
+
+    let content = std::fs::read_to_string(path).map_err(|_| StaticError::Other {
+        message: format!("Failed to read include file: {path}"),
+    })?;
 
     check_include_from_src(checker, &path.to_string(), &content)
 }
