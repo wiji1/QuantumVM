@@ -85,6 +85,13 @@ impl Parser {
 
     pub fn start(&mut self, include_lib: bool) -> Result<Program, ParseError> {
         let version = self.parse_version()?;
+        if let Some(version) = version {
+            if version < 3.0 { return Err(ParseError::InvalidVersion {
+                found: version.to_string(),
+                span: self.peek().span.clone(),
+            }); }
+        }
+
         let mut statements = vec![];
         while !self.is_at_end() {
             self.skip_trivia();
