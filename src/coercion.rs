@@ -66,7 +66,8 @@ pub fn coerce_value(value: Value, target: &Type) -> Result<Value, CoercionError>
         });
     }
 
-    match (value, target) {
+    match (value.clone(), target) {
+        (Value::Array(_), Type::Array { .. }) => Ok(value),
         (Value::Int(i), Type::Int(_)) => Ok(Value::Int(i)),
         (Value::Int(i), Type::UInt(_)) => Ok(Value::Int(i)),
         (Value::Float(f), Type::Float(_)) => Ok(Value::Float(f)),
@@ -218,10 +219,23 @@ pub fn infer_type_from_value(value: &Value) -> Type {
                     dimensions: vec![Some(0)],
                 }
             } else {
-                let elem_type = infer_type_from_value(&elements[0]);
-                Type::Array {
-                    element_type: Box::new(elem_type),
-                    dimensions: vec![Some(elements.len() as i64)],
+                let first_elem_type = infer_type_from_value(&elements[0]);
+
+                match first_elem_type {
+                    Type::Array { element_type, dimensions } => {
+                        let mut all_dims = vec![Some(elements.len() as i64)];
+                        all_dims.extend(dimensions);
+                        Type::Array {
+                            element_type,
+                            dimensions: all_dims,
+                        }
+                    }
+                    other => {
+                        Type::Array {
+                            element_type: Box::new(other),
+                            dimensions: vec![Some(elements.len() as i64)],
+                        }
+                    }
                 }
             }
         }

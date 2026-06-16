@@ -31,9 +31,22 @@ impl StateVector {
     }
 
     pub fn renormalize(&mut self) {
-        let total = self.total_probability().sqrt();
+        let total_prob = self.total_probability();
+
+        //TODO: Determine if this is necessary
+        if total_prob <= 1e-10 || !total_prob.is_finite() {
+            eprintln!("WARNING: Invalid statevector normalization (total prob = {})", total_prob);
+            eprintln!("Resetting to |0⟩ state");
+            self.amplitudes[0] = C64::new(1.0, 0.0);
+            for i in 1..self.amplitudes.len() {
+                self.amplitudes[i] = C64::new(0.0, 0.0);
+            }
+            return;
+        }
+
+        let norm = total_prob.sqrt();
         for amp in &mut self.amplitudes {
-            *amp /= total;
+            *amp /= norm;
         }
     }
 

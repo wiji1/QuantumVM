@@ -143,6 +143,18 @@ impl Interpreter {
         self.state_vector.clone()
     }
 
+    fn normalize_index(idx: i64, len: usize) -> Result<usize, RuntimeError> {
+        if idx < 0 {
+            let pos = len as i64 + idx;
+            if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(idx as usize, len)); }
+            Ok(pos as usize)
+        } else {
+            let idx_usize = idx as usize;
+            if idx_usize >= len { return Err(RuntimeError::IndexOutOfBounds(idx_usize, len)); }
+            Ok(idx_usize)
+        }
+    }
+
     pub fn start(&mut self) {
         self.push_scope();
 
@@ -451,18 +463,30 @@ impl Interpreter {
             value = match (value, index_val) {
                 (Value::Array(arr), Value::Int(i)) => {
                     let len = arr.len();
-                    arr.into_iter().nth(i as usize)
-                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, len))?
+                    let normalized_idx = Self::normalize_index(i, len)?;
+                    arr.into_iter().nth(normalized_idx)
+                        .ok_or(RuntimeError::IndexOutOfBounds(normalized_idx, len))?
                 }
                 (Value::Array(arr), Value::Range { start, stop, step }) => {
-                    let start = start.unwrap_or(0) as usize;
-                    let stop = stop.unwrap_or(arr.len() as i64) as usize;
+                    let len = arr.len();
+                    let start = if let Some(s) = start { Self::normalize_index(s, len)? }
+                    else { 0 };
+                    let stop = if let Some(s) = stop { Self::normalize_index(s, len)? }
+                    else { len - 1 };
                     let step = step.unwrap_or(1) as usize;
                     Value::Array((start..=stop).step_by(step).map(|i| arr[i].clone()).collect())
                 }
                 (Value::Bits { value, width }, Value::Int(i)) => {
-                    if i as usize >= width { return Err(RuntimeError::IndexOutOfBounds(i as usize, width)); }
-                    Value::Bits { value: (value >> i) & 1, width: 1 }
+                    let normalized_idx = if i < 0 {
+                        let pos = width as i64 + i;
+                        if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(i as usize, width)); }
+                        pos as usize
+                    } else {
+                        let idx = i as usize;
+                        if idx >= width { return Err(RuntimeError::IndexOutOfBounds(idx, width)); }
+                        idx
+                    };
+                    Value::Bits { value: (value >> normalized_idx) & 1, width: 1 }
                 }
                 _ => return Err(RuntimeError::TypeMismatch("cannot index with this type".to_string())),
             };
@@ -782,12 +806,24 @@ impl Interpreter {
                 Value::Array(v) => v,
                 _ => return Err(RuntimeError::TypeMismatch("slice assignment requires array".to_string())),
             };
+
+            let (normalized_start, normalized_stop, step_val) = {
+                let target = self.lookup(name).ok_or(RuntimeError::NullPointer)?;
+                if let Value::Array(arr) = target {
+                    let len = arr.len();
+                    let start_idx = if let Some(s) = start { Self::normalize_index(s, len)? }
+                    else { 0 };
+                    let stop_idx = if let Some(s) = stop { Self::normalize_index(s, len)? }
+                    else { len - 1 };
+                    (start_idx, stop_idx, step.unwrap_or(1) as usize)
+                } else {
+                    return Err(RuntimeError::TypeMismatch("cannot slice non-array".to_string()));
+                }
+            };
+
             let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
             if let Value::Array(arr) = target {
-                let start = start.unwrap_or(0) as usize;
-                let stop = stop.unwrap_or(arr.len() as i64) as usize;
-                let step = step.unwrap_or(1) as usize;
-                for (i, val) in (start..=stop).step_by(step).zip(new_values) {
+                for (i, val) in (normalized_start..=normalized_stop).step_by(step_val).zip(new_values) {
                     arr[i] = val;
                 }
                 return Ok(ControlFlow::None);
@@ -795,18 +831,26 @@ impl Interpreter {
             return Err(RuntimeError::TypeMismatch("cannot slice non-array".to_string()));
         }
 
-        let evaluated_indices: Vec<usize> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
-            Ok(Value::Int(i)) => Ok(i as usize),
+        let evaluated_indices: Vec<i64> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
+            Ok(Value::Int(i)) => Ok(i),
             Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
             Err(e) => Err(e),
-        }).collect::<Result<Vec<usize>, RuntimeError>>()?;
+        }).collect::<Result<Vec<i64>, RuntimeError>>()?;
 
-        let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+        let is_bits = matches!(self.lookup(name), Some(Value::Bits { .. }));
 
-        match target {
-            Value::Bits { value, width } => {
-                let bit_pos = evaluated_indices[0];
-                if bit_pos >= *width { return Err(RuntimeError::IndexOutOfBounds(bit_pos, *width)); }
+        if is_bits {
+            let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+            if let Value::Bits { value, width } = target {
+                let bit_pos = if evaluated_indices[0] < 0 {
+                    let pos = *width as i64 + evaluated_indices[0];
+                    if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(evaluated_indices[0] as usize, *width)); }
+                    pos as usize
+                } else {
+                    let idx = evaluated_indices[0] as usize;
+                    if idx >= *width { return Err(RuntimeError::IndexOutOfBounds(idx, *width)); }
+                    idx
+                };
                 match new_value {
                     Value::Bits { value: new_bit, .. } => {
                         if new_bit != 0 { *value |= 1 << bit_pos; }
@@ -822,10 +866,14 @@ impl Interpreter {
                     }
                     _ => return Err(RuntimeError::TypeMismatch("cannot assign to bit register".to_string())),
                 }
-                Ok(ControlFlow::None)
+                return Ok(ControlFlow::None);
             }
+        }
+
+        let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+        match target {
             Value::Array(a) => {
-                Self::set_nested_evaluated(a, &evaluated_indices, new_value)?;
+                Self::set_nested_with_i64_indices(a, &evaluated_indices, new_value)?;
                 Ok(ControlFlow::None)
             }
             _ => Err(RuntimeError::TypeMismatch("only arrays and bit registers can be index assigned".to_string()))
@@ -842,6 +890,22 @@ impl Interpreter {
         else {
             match elem {
                 Value::Array(inner) => Self::set_nested_evaluated(inner, &indices[1..], value)?,
+                _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
+            };
+        }
+
+        Ok(ControlFlow::None)
+    }
+
+    fn set_nested_with_i64_indices(arr: &mut Vec<Value>, indices: &[i64], value: Value) -> Result<ControlFlow, RuntimeError> {
+        let len = arr.len();
+        let normalized_idx = Self::normalize_index(indices[0], len)?;
+        let elem = arr.get_mut(normalized_idx).ok_or(RuntimeError::IndexOutOfBounds(normalized_idx, len))?;
+
+        if indices.len() == 1 { *elem = value }
+        else {
+            match elem {
+                Value::Array(inner) => Self::set_nested_with_i64_indices(inner, &indices[1..], value)?,
                 _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
             };
         }
@@ -1203,7 +1267,7 @@ impl Interpreter {
                 let old_amplitudes = sv.amplitudes.clone();
                 sv.amplitudes = vec![C64::new(0.0, 0.0); new_size];
                 for (i, amp) in old_amplitudes.iter().enumerate() {
-                    sv.amplitudes[i * (2usize.pow(count as u32))] = *amp;
+                    sv.amplitudes[i] = *amp;
                 }
                 sv.num_qubits = self.num_qubits;
             }

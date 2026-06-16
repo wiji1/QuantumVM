@@ -1178,28 +1178,25 @@ impl Parser {
             Ok(Stmt::ExpressionStatement(Expr::Measure(Box::new(qubit))))
         }
     }
-
     fn parse_index_operands(&mut self) -> Result<Vec<Expr>, ParseError> {
         let mut indices = vec![];
         while self.at(TokenType::Symbol(Symbol::LBracket)) {
             self.advance();
 
-            if self.at(TokenType::Symbol(Symbol::Colon)) {
-                indices.push(self.parse_range_expression(None)?);
-            } else {
-                let first = self.parse_expr(0)?;
-                if self.at(TokenType::Symbol(Symbol::Colon)) {
-                    indices.push(self.parse_range_expression(Some(first))?);
-                } else if self.at(TokenType::Symbol(Symbol::Comma)) {
-                    let mut exprs = vec![first];
-                    while self.at(TokenType::Symbol(Symbol::Comma)) {
-                        self.advance();
-                        exprs.push(self.parse_expr(0)?);
-                    }
-                    expect_token!(self, TokenType::Symbol(Symbol::RBracket));
-                    indices.extend(exprs);
-                    continue;
-                } else { indices.push(first); }
+            loop {
+                let index_expr = if self.at(TokenType::Symbol(Symbol::Colon)) {
+                    self.parse_range_expression(None)?
+                } else {
+                    let first = self.parse_expr(0)?;
+                    if self.at(TokenType::Symbol(Symbol::Colon)) {
+                        self.parse_range_expression(Some(first))?
+                    } else { first }
+                };
+
+                indices.push(index_expr);
+
+                if self.at(TokenType::Symbol(Symbol::Comma)) { self.advance(); }
+                else { break; }
             }
 
             expect_token!(self, TokenType::Symbol(Symbol::RBracket));

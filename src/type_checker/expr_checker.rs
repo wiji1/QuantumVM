@@ -84,10 +84,13 @@ impl TypeChecker {
 
         if indexed.indices.is_empty() { return Ok(base_type); }
 
+        let mut is_range = Vec::new();
         for index in &indexed.indices {
             let index_type = self.check_expression(index)?;
-            if !index_type.is_integer() && !matches!(index_type, Range) {
-                return Err(StaticError::NonIntegerIndex { index_type });
+            match index_type {
+                Range => is_range.push(true),
+                ref t if t.is_integer() => is_range.push(false),
+                _ => return Err(StaticError::NonIntegerIndex { index_type }),
             }
         }
 
@@ -100,14 +103,19 @@ impl TypeChecker {
                     });
                 }
 
-                if indexed.indices.len() == dimensions.len() { Ok(*element_type) }
-                else {
-                    let remaining_dims = dimensions[indexed.indices.len()..].to_vec();
-                    Ok(Array {
-                        element_type,
-                        dimensions: remaining_dims,
-                    })
+                let mut result_dims = Vec::new();
+
+                for (i, &is_range_idx) in is_range.iter().enumerate() {
+                    if is_range_idx {
+                        let range_size = self.compute_range_size(&indexed.indices[i], dimensions[i]);
+                        result_dims.push(range_size);
+                    }
                 }
+
+                result_dims.extend_from_slice(&dimensions[indexed.indices.len()..]);
+
+                if result_dims.is_empty() { Ok(*element_type) }
+                else { Ok(Array { element_type, dimensions: result_dims, }) }
             }
 
             Bit(Some(_)) => {
@@ -132,6 +140,41 @@ impl TypeChecker {
 
             _ => Err(StaticError::InvalidArrayAccess { type_: base_type }),
         }
+    }
+
+    fn compute_range_size(&self, range_expr: &Expr, original_size: Option<i64>) -> Option<i64> {
+        if let Expr::Range { start, stop, step } = range_expr {
+            let start_val = start.as_ref().and_then(|e| {
+                if let Expr::Int(n) = **e { Some(n) } else { None }
+            });
+            let stop_val = stop.as_ref().and_then(|e| {
+                if let Expr::Int(n) = **e { Some(n) } else { None }
+            });
+            let step_val = step.as_ref().and_then(|e| {
+                if let Expr::Int(n) = **e { Some(n) } else { None }
+            }).unwrap_or(1);
+
+            match (start_val, stop_val, original_size) {
+                (Some(s), Some(e), _) => {
+                    let range_len = (e - s + 1).max(0);
+                    Some((range_len + step_val - 1) / step_val)
+                }
+                (None, Some(e), _) => {
+                    let range_len = (e + 1).max(0);
+                    Some((range_len + step_val - 1) / step_val)
+                }
+                (Some(s), None, Some(orig)) => {
+                    let range_len = (orig - s).max(0);
+                    Some((range_len + step_val - 1) / step_val)
+                }
+                (None, None, Some(orig)) => {
+                    Some((orig + step_val - 1) / step_val)
+                }
+                _ => {
+                    None
+                }
+            }
+        } else { original_size }
     }
 
     fn check_unary(&mut self, op: &crate::parser::supporting_types::UnaryOp, expr: &Expr) -> Result<Type, StaticError> {
