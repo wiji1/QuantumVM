@@ -9,6 +9,17 @@ use crate::type_checker::TypeChecker;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
+/// Represents the control flow state regarding return statements
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnState {
+    /// All execution paths guarantee a return
+    AlwaysReturns,
+    /// Some paths may return, others may not
+    MayReturn,
+    /// No return statements on any path
+    NeverReturns,
+}
+
 pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), StaticError> {
     match stmt {
         Stmt::QuantumDecl { name, size } => {
@@ -458,6 +469,99 @@ fn check_return(checker: &mut TypeChecker, expr: &Option<Expr>) -> Result<(), St
     }
 }
 
+fn analyze_return_paths(stmts: &[Stmt]) -> ReturnState {
+    let mut current_state = ReturnState::NeverReturns;
+
+    for stmt in stmts {
+        let stmt_state = analyze_stmt_return(stmt);
+        current_state = combine_sequential_states(current_state, stmt_state);
+
+        if current_state == ReturnState::AlwaysReturns { return ReturnState::AlwaysReturns; }
+    }
+
+    current_state
+}
+
+fn analyze_stmt_return(stmt: &Stmt) -> ReturnState {
+    match stmt {
+        Stmt::Return(_) => ReturnState::AlwaysReturns,
+
+        Stmt::If { then, else_, .. } => {
+            let then_state = analyze_return_paths(then);
+
+            if let Some(else_stmts) = else_ {
+                let else_state = analyze_return_paths(else_stmts);
+                combine_branch_states(then_state, else_state)
+            } else {
+                if then_state == ReturnState::AlwaysReturns { ReturnState::MayReturn }
+                else if then_state == ReturnState::MayReturn { ReturnState::MayReturn }
+                else { ReturnState::NeverReturns }
+            }
+        }
+
+        Stmt::Block(stmts) => analyze_return_paths(stmts),
+
+        Stmt::Switch { cases, .. } => {
+            if cases.is_empty() { return ReturnState::NeverReturns; }
+
+            let mut all_return = true;
+            let mut any_return = false;
+
+            for case in cases {
+                let case_state = analyze_return_paths(&case.body);
+                match case_state {
+                    ReturnState::AlwaysReturns => any_return = true,
+                    ReturnState::MayReturn => {
+                        any_return = true;
+                        all_return = false;
+                    }
+                    ReturnState::NeverReturns => all_return = false,
+                }
+            }
+
+            if all_return { ReturnState::MayReturn }
+            else if any_return { ReturnState::MayReturn }
+            else { ReturnState::NeverReturns }
+        }
+
+        Stmt::For { body, .. } => {
+            let body_state = analyze_return_paths(body);
+            match body_state {
+                ReturnState::AlwaysReturns | ReturnState::MayReturn => ReturnState::MayReturn,
+                ReturnState::NeverReturns => ReturnState::NeverReturns,
+            }
+        }
+
+        Stmt::While { body, .. } => {
+            let body_state = analyze_return_paths(body);
+            match body_state {
+                ReturnState::AlwaysReturns | ReturnState::MayReturn => ReturnState::MayReturn,
+                ReturnState::NeverReturns => ReturnState::NeverReturns,
+            }
+        }
+
+        _ => ReturnState::NeverReturns,
+    }
+}
+
+fn combine_sequential_states(first: ReturnState, second: ReturnState) -> ReturnState {
+    match (first, second) {
+        (ReturnState::AlwaysReturns, _) => ReturnState::AlwaysReturns,
+        (ReturnState::MayReturn, ReturnState::AlwaysReturns) => ReturnState::AlwaysReturns,
+        (ReturnState::MayReturn, _) => ReturnState::MayReturn,
+        (ReturnState::NeverReturns, state) => state,
+    }
+}
+
+fn combine_branch_states(branch1: ReturnState, branch2: ReturnState) -> ReturnState {
+    match (branch1, branch2) {
+        (ReturnState::AlwaysReturns, ReturnState::AlwaysReturns) => ReturnState::AlwaysReturns,
+        (ReturnState::AlwaysReturns, _) | (_, ReturnState::AlwaysReturns) => ReturnState::MayReturn,
+        (ReturnState::MayReturn, _) | (_, ReturnState::MayReturn) => ReturnState::MayReturn,
+        (ReturnState::NeverReturns, ReturnState::NeverReturns) => ReturnState::NeverReturns,
+    }
+}
+
 pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), StaticError> {
     let param_types: Vec<Type> = params.iter()
         .map(|p| Type::from_param_type(&p.ty))
@@ -485,7 +589,12 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
     checker.env_mut().pop_scope();
     checker.clear_function_context();
 
-    // TODO: Check that all paths return if return_type is not Void
+    if ret_type != Type::Void {
+        let return_state = analyze_return_paths(body);
+        if return_state != ReturnState::AlwaysReturns {
+            return Err(StaticError::MissingReturn { function: name.to_string() });
+        }
+    }
 
     Ok(())
 }

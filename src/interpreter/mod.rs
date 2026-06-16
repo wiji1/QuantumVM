@@ -144,15 +144,9 @@ impl Interpreter {
     }
 
     fn normalize_index(idx: i64, len: usize) -> Result<usize, RuntimeError> {
-        if idx < 0 {
-            let pos = len as i64 + idx;
-            if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(idx as usize, len)); }
-            Ok(pos as usize)
-        } else {
-            let idx_usize = idx as usize;
-            if idx_usize >= len { return Err(RuntimeError::IndexOutOfBounds(idx_usize, len)); }
-            Ok(idx_usize)
-        }
+        let idx_usize = idx as usize;
+        if idx_usize >= len { return Err(RuntimeError::IndexOutOfBounds(idx_usize, len)); }
+        Ok(idx_usize)
     }
 
     pub fn start(&mut self) {

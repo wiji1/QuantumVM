@@ -276,6 +276,11 @@ impl Parser {
                     })
                 }
             }
+            TokenType::Keyword(Keyword::Measure) => {
+                self.advance();
+                let qubit = self.parse_gate_operand()?;
+                Expr::Measure(Box::new(qubit))
+            }
             _ => return Err(ParseError::UnexpectedToken {
                 expected: TokenType::Literal(Literal::Integer(0)),
                 found: token.kind.clone(),
@@ -781,14 +786,7 @@ impl Parser {
             })
         };
 
-        let value = if self.at(TokenType::Keyword(Keyword::Measure)) {
-            self.advance();
-
-            let qubit = self.parse_gate_operand()?;
-            Expr::Measure(Box::new(qubit))
-        } else {
-            self.parse_expr(0)?
-        };
+        let value = self.parse_expr(0)?;
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
@@ -912,13 +910,8 @@ impl Parser {
         expect_token!(self, TokenType::Keyword(Keyword::Return));
 
         let expr = match self.peek().kind {
-            TokenType::Symbol(Symbol::Semicolon) => { None }
-            TokenType::Keyword(Keyword::Measure) => {
-                self.advance();
-                let qubit = self.parse_gate_operand()?;
-                Some(Expr::Measure(Box::new(qubit)))
-            }
-            _ => { Some(self.parse_expr(0)?) }
+            TokenType::Symbol(Symbol::Semicolon) => None,
+            _ => Some(self.parse_expr(0)?)
         };
 
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
