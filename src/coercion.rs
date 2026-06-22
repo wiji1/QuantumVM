@@ -140,7 +140,7 @@ pub fn coerce_to_bool(value: Value) -> Result<Value, CoercionError> {
         Value::Int(i) => Ok(Value::Bool(i != 0)),
         Value::Float(f) => Ok(Value::Bool(f != 0.0)),
         Value::Bits { value, width: 1 } => Ok(Value::Bool(value != 0)),
-        Value::Bits { value, width } => {
+        Value::Bits { value, width: _ } => {
             Ok(Value::Bool(value != 0))
         }
         _ => Err(CoercionError::InvalidCoercion {

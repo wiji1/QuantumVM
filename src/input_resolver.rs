@@ -1,6 +1,6 @@
 use crate::interpreter::value::Value;
 use crate::parser::supporting_types::ClassicalType;
-use crate::parser::expression::Expr;
+use crate::parser::expression::{Expr, ExprKind};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -344,7 +344,7 @@ fn validate_value(
 
 fn get_width_from_expr(expr: &Option<Expr>) -> Option<usize> {
     expr.as_ref().and_then(|e| {
-        if let Expr::Int(i) = e {
+        if let ExprKind::Int(i) = &e.kind {
             Some(*i as usize)
         } else { None }
     })

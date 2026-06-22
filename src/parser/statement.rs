@@ -1,8 +1,9 @@
+use crate::lexer::Span;
 use crate::parser::expression::Expr;
 use crate::parser::supporting_types::*;
 
 #[derive(Debug, Clone)]
-pub enum Stmt {
+pub enum StmtKind {
     QuantumDecl { name: String, size: Option<Expr> },
     ClassicalDecl { ty: ClassicalType, name: String, init: Option<Expr> },
     ArrayDecl { ty: ClassicalType, name: String, size: Vec<Expr>, init: Option<Expr> },
@@ -34,4 +35,16 @@ pub enum Stmt {
     IncludeFromSrc(String, String),
     Pragma,
     NoOp
+}
+
+#[derive(Debug, Clone)]
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
+}
+
+impl Stmt {
+    pub fn new(kind: StmtKind, span: Span) -> Self {
+        Self { kind, span }
+    }
 }

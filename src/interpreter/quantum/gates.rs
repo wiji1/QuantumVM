@@ -40,7 +40,7 @@ pub fn matrix_pow_2(m: &Matrix2, n: i64) -> Matrix2 {
     if n == 0 { return identity_2(); }
     if n < 0 { return matrix_pow_2(&conjugate_transpose_2(m), -n); }
     let mut result = identity_2();
-    for i in 0..n {
+    for _ in 0..n {
         result = matrix_mul_2(&result, m);
     }
     result

@@ -1,5 +1,5 @@
 use {ClassicalType, ParamType};
-use crate::parser::expression::Expr;
+use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::supporting_types::*;
 use Type::*;
 
@@ -78,8 +78,11 @@ impl Type {
 
     fn extract_size(size: &Option<Expr>) -> Option<i64> {
         match size {
-            Some(Expr::Int(n)) => Some(*n),
-            _ => None,
+            Some(expr) => match &expr.kind {
+                ExprKind::Int(n) => Some(*n),
+                _ => None,
+            },
+            None => None,
         }
     }
 

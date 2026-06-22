@@ -1,6 +1,7 @@
-use crate::parser::expression::Expr;
+use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::supporting_types::IndexedIdent;
 use crate::type_checker::coercion::coerce_binary_operands;
+use crate::type_checker::reference_registry::ReferenceType;
 use crate::type_checker::static_error::StaticError;
 use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
@@ -8,38 +9,57 @@ use Type::*;
 
 impl TypeChecker {
     pub fn check_expression(&mut self, expr: &Expr) -> Result<Type, StaticError> {
-        match expr {
-            Expr::Int(_) => Ok(Int(None)),
-            Expr::Float(_) => Ok(Float(None)),
-            Expr::Bool(_) => Ok(Bool),
-            Expr::Imaginary(_) => Ok(Complex(Box::new(Float(None)))),
-            Expr::Bits(_, width) => Ok(Bit(Some(*width as i64))),
+        match &expr.kind {
+            ExprKind::Int(_) => Ok(Int(None)),
+            ExprKind::Float(_) => Ok(Float(None)),
+            ExprKind::Bool(_) => Ok(Bool),
+            ExprKind::Imaginary(_) => Ok(Complex(Box::new(Float(None)))),
+            ExprKind::Bits(_, width) => Ok(Bit(Some(*width as i64))),
 
-            Expr::Timing(_) => Ok(Duration),
+            ExprKind::Timing(_) => Ok(Duration),
 
-            Expr::Array(elements) => { self.check_array_expr(elements) }
+            ExprKind::Array(elements) => { self.check_array_expr(elements) }
 
-            Expr::Ident(name) => { self.check_identifier(name) }
+            ExprKind::Ident(name) => {
+                self.reference_registry_mut().add_reference(
+                    name.clone(),
+                    expr.span.clone(),
+                    ReferenceType::VariableRead
+                );
+                self.check_identifier(name)
+            }
 
-            Expr::IndexedIdent(indexed) => { self.check_indexed_ident(indexed) }
+            ExprKind::IndexedIdent(indexed) => {
+                self.reference_registry_mut().add_reference(
+                    indexed.name.clone(),
+                    expr.span.clone(),
+                    ReferenceType::VariableRead
+                );
+                self.check_indexed_ident(indexed)
+            }
 
-            Expr::Measure(operand) => { self.check_measure(operand) }
+            ExprKind::Measure(operand) => { self.check_measure(operand) }
 
-            Expr::Unary { op, expr } => { self.check_unary(op, expr) }
+            ExprKind::Unary { op, expr } => { self.check_unary(op, expr) }
 
-            Expr::Binary { op, lhs, rhs } => {
+            ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs)
             }
 
-            Expr::Call { name, args } => {
+            ExprKind::Call { name, args } => {
+                self.reference_registry_mut().add_reference(
+                    name.clone(),
+                    expr.span.clone(),
+                    ReferenceType::FunctionCall
+                );
                 self.check_call(name, args)
             }
 
-            Expr::Cast { ty, expr } => {
+            ExprKind::Cast { ty, expr } => {
                 self.check_cast(ty, expr)
             }
 
-            Expr::Range { start, stop, step } => {
+            ExprKind::Range { start, stop, step } => {
                 self.check_range(start, stop, step)
             }
         }
@@ -143,15 +163,15 @@ impl TypeChecker {
     }
 
     fn compute_range_size(&self, range_expr: &Expr, original_size: Option<i64>) -> Option<i64> {
-        if let Expr::Range { start, stop, step } = range_expr {
+        if let ExprKind::Range { start, stop, step } = &range_expr.kind {
             let start_val = start.as_ref().and_then(|e| {
-                if let Expr::Int(n) = **e { Some(n) } else { None }
+                if let ExprKind::Int(n) = e.kind { Some(n) } else { None }
             });
             let stop_val = stop.as_ref().and_then(|e| {
-                if let Expr::Int(n) = **e { Some(n) } else { None }
+                if let ExprKind::Int(n) = e.kind { Some(n) } else { None }
             });
             let step_val = step.as_ref().and_then(|e| {
-                if let Expr::Int(n) = **e { Some(n) } else { None }
+                if let ExprKind::Int(n) = e.kind { Some(n) } else { None }
             }).unwrap_or(1);
 
             match (start_val, stop_val, original_size) {

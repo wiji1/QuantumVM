@@ -5,11 +5,13 @@ pub mod diagnostics;
 pub mod coercion;
 pub mod expr_checker;
 pub mod stmt_checker;
+pub mod reference_registry;
 
 use crate::parser::Program;
 use crate::type_checker::diagnostics::{Diagnostic, DiagnosticCollector};
 use crate::type_checker::type_env::TypeEnv;
 use crate::type_checker::static_error::StaticError;
+use crate::type_checker::reference_registry::ReferenceRegistry;
 
 #[derive(Debug, Clone)]
 pub struct TypeCheckConfig {
@@ -39,6 +41,7 @@ pub struct TypeChecker {
     diagnostics: DiagnosticCollector,
     config: TypeCheckConfig,
     current_function: Option<FunctionContext>,
+    reference_registry: ReferenceRegistry,
 }
 
 #[derive(Debug, Clone)]
@@ -49,11 +52,12 @@ struct FunctionContext {
 
 impl TypeChecker {
     pub fn new(config: TypeCheckConfig) -> Self {
-        let mut checker = Self {
+        let checker = Self {
             env: TypeEnv::new(),
             diagnostics: DiagnosticCollector::new(),
             config,
             current_function: None,
+            reference_registry: ReferenceRegistry::new(),
         };
 
         checker
@@ -62,7 +66,8 @@ impl TypeChecker {
     pub fn check_program(&mut self, program: &Program) -> TypeCheckResult {
         for stmt in &program.statements {
             if let Err(e) = self.check_statement(stmt) {
-                self.diagnostics.add_error(e);
+                let diagnostic = Diagnostic::from_type_error_with_span(e, stmt.span.clone());
+                self.diagnostics.add(diagnostic);
 
                 if self.config.strict_mode && !self.config.collect_all_errors { break; }
             }
@@ -95,6 +100,14 @@ impl TypeChecker {
     }
     pub fn has_errors(&self) -> bool {
         self.diagnostics.has_errors()
+    }
+
+    pub fn reference_registry(&self) -> &ReferenceRegistry {
+        &self.reference_registry
+    }
+
+    pub fn reference_registry_mut(&mut self) -> &mut ReferenceRegistry {
+        &mut self.reference_registry
     }
 
     pub(crate) fn current_function(&self) -> Option<&FunctionContext> {

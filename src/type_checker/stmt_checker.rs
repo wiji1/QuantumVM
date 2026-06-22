@@ -1,13 +1,16 @@
-use crate::parser::statement::Stmt;
+use crate::parser::statement::{Stmt, StmtKind};
 use {ForIter, GateOperand, Param};
-use crate::parser::expression::Expr;
+use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::supporting_types::*;
 use crate::type_checker::type_env::{FunctionSignature, GateSignature};
 use crate::type_checker::static_error::StaticError;
 use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
+use crate::type_checker::diagnostics::Diagnostic;
+use crate::type_checker::reference_registry::ReferenceType;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReturnState {
@@ -16,114 +19,144 @@ enum ReturnState {
     NeverReturns,
 }
 
+fn check_stmt_with_diagnostics(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), StaticError> {
+    if let Err(e) = check_statement(checker, stmt) {
+        let diagnostic = Diagnostic::from_type_error_with_span(e.clone(), stmt.span.clone());
+        checker.add_diagnostic(diagnostic);
+
+        if !checker.config().collect_all_errors { return Err(e); }
+    }
+    Ok(())
+}
+
 pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), StaticError> {
-    match stmt {
-        Stmt::QuantumDecl { name, size } => {
-            check_quantum_decl(checker, name, size)
+    match &stmt.kind {
+        StmtKind::QuantumDecl { name, size } => {
+            check_quantum_decl(checker, name, size, &stmt.span)
         }
 
-        Stmt::ClassicalDecl { ty, name, init } => {
-            check_classical_decl(checker, ty, name, init)
+        StmtKind::ClassicalDecl { ty, name, init } => {
+            check_classical_decl(checker, ty, name, init, &stmt.span)
         }
 
-        Stmt::ArrayDecl { ty, name, size, init } => {
-            check_array_decl(checker, ty, name, size, init)
+        StmtKind::ArrayDecl { ty, name, size, init } => {
+            check_array_decl(checker, ty, name, size, init, &stmt.span)
         }
 
-        Stmt::ConstDecl { ty, name, init } => {
-            check_const_decl(checker, ty, name, init)
+        StmtKind::ConstDecl { ty, name, init } => {
+            check_const_decl(checker, ty, name, init, &stmt.span)
         }
 
-        Stmt::IoDecl { direction: _, ty, name } => {
+        StmtKind::IoDecl { direction: _, ty, name } => {
             let var_type = Type::from_classical_type(ty);
-            checker.env_mut().define(name.clone(), var_type, false)?;
+            checker.env_mut().define_with_span(name.clone(), var_type, false, Some(stmt.span.clone()))?;
             Ok(())
         }
 
-        Stmt::Assign { target, op: _, value } => {
+        StmtKind::Assign { target, op: _, value } => {
+            checker.reference_registry_mut().add_reference(
+                target.name.clone(),
+                stmt.span.clone(),
+                crate::type_checker::reference_registry::ReferenceType::VariableWrite
+            );
             check_assignment(checker, target, value)
         }
 
-        Stmt::Let { name, value } => {
+        StmtKind::Let { name, value } => {
+            checker.reference_registry_mut().add_reference(
+                name.clone(),
+                stmt.span.clone(),
+                crate::type_checker::reference_registry::ReferenceType::VariableWrite
+            );
             check_let(checker, name, value)
         }
 
-        Stmt::If { cond, then, else_ } => {
+        StmtKind::If { cond, then, else_ } => {
             check_if(checker, cond, then, else_)
         }
 
-        Stmt::Switch { expr, cases } => {
+        StmtKind::Switch { expr, cases } => {
             check_switch(checker, expr, cases)
         }
 
-        Stmt::For { var, ty, iter, body } => {
+        StmtKind::For { var, ty, iter, body } => {
             check_for(checker, var, ty, iter, body)
         }
 
-        Stmt::While { cond, body } => {
+        StmtKind::While { cond, body } => {
             check_while(checker, cond, body)
         }
 
-        Stmt::Continue | Stmt::Break => {
+        StmtKind::Continue | StmtKind::Break => {
             Ok(())
         }
 
-        Stmt::Return(expr) => {
+        StmtKind::Return(expr) => {
             check_return(checker, expr)
         }
 
-        Stmt::Def { name, params, return_type, body } => {
-            check_def(checker, name, params, return_type, body)
+        StmtKind::Def { name, params, return_type, body } => {
+            check_def(checker, name, params, return_type, body, Some(stmt.span.clone()))
         }
 
-        Stmt::GateDef { name, params, qubits, body } => {
-            check_gate_def(checker, name, params, qubits, body)
+        StmtKind::GateDef { name, params, qubits, body } => {
+            check_gate_def(checker, name, params, qubits, body, Some(stmt.span.clone()))
         }
 
-        Stmt::GateCall { name, modifiers: _, params, qubits } => {
+        StmtKind::GateCall { name, modifiers: _, params, qubits } => {
+            let name_span = crate::lexer::Span {
+                line: stmt.span.line,
+                col: stmt.span.col,
+                len: name.len(),
+            };
+            checker.reference_registry_mut().add_reference(
+                name.clone(),
+                name_span,
+                ReferenceType::GateCall
+            );
             check_gate_call(checker, name, params, qubits)
         }
 
-        Stmt::ExpressionStatement(expr) => {
+        StmtKind::ExpressionStatement(expr) => {
             checker.check_expression(expr)?;
             Ok(())
         }
 
-        Stmt::Reset { qubit } => {
+        StmtKind::Reset { qubit } => {
             check_qubit_operand(checker, qubit)
         }
 
-        Stmt::Barrier { qubits } => {
+        StmtKind::Barrier { qubits } => {
             for qubit in qubits {
                 check_qubit_operand(checker, qubit)?;
             }
             Ok(())
         }
 
-        Stmt::Block(stmts) => {
+        StmtKind::Block(stmts) => {
             checker.env_mut().push_scope();
             for stmt in stmts {
-                check_statement(checker, stmt)?;
+                check_stmt_with_diagnostics(checker, stmt)?;
             }
             checker.env_mut().pop_scope();
             Ok(())
         }
 
-        Stmt::Include(path) => {
+        StmtKind::Include(path) => {
             check_include(checker, path)
         }
 
-        Stmt::IncludeFromSrc(path, content) => {
+        StmtKind::IncludeFromSrc(path, content) => {
             check_include_from_src(checker, path, content)
         }
 
-        Stmt::Pragma | Stmt::NoOp | Stmt::Extern { .. } => {
+        StmtKind::Pragma | StmtKind::NoOp | StmtKind::Extern { .. } => {
             Ok(())
         }
     }
 }
 
-fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>) -> Result<(), StaticError> {
+fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
     let qubit_type = match size {
         Some(expr) => {
             let size_type = checker.check_expression(expr)?;
@@ -135,17 +168,17 @@ fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>
                 });
             }
 
-            if let Expr::Int(n) = expr { Type::Qubit(Some(*n)) }
+            if let ExprKind::Int(n) = &expr.kind { Type::Qubit(Some(*n)) }
             else { Type::Qubit(None) }
         }
         None => Type::Qubit(None),
     };
 
-    checker.env_mut().define(name.to_string(), qubit_type, false)?;
+    checker.env_mut().define_with_span(name.to_string(), qubit_type, false, Some(span.clone()))?;
     Ok(())
 }
 
-fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Option<Expr>) -> Result<(), StaticError> {
+fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
 
     if let Some(init_expr) = init {
@@ -162,15 +195,15 @@ fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &st
             }
         }
 
-        checker.env_mut().define(name.to_string(), var_type, false)?;
+        checker.env_mut().define_with_span(name.to_string(), var_type, false, Some(span.clone()))?;
     } else {
-        checker.env_mut().define_uninitialized(name.to_string(), var_type, false);
+        checker.env_mut().define_uninitialized_with_span(name.to_string(), var_type, false, Some(span.clone()));
     }
 
     Ok(())
 }
 
-fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, size: &[Expr], init: &Option<Expr>) -> Result<(), StaticError> {
+fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, size: &[Expr], init: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
     let element_type = Type::from_classical_type(ty);
 
     let mut dimensions = Vec::new();
@@ -184,7 +217,7 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
             });
         }
 
-        if let Expr::Int(n) = size_expr {
+        if let ExprKind::Int(n) = &size_expr.kind {
             dimensions.push(Some(*n));
         } else { dimensions.push(None); }
     }
@@ -206,11 +239,11 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
         }
     }
 
-    checker.env_mut().define(name.to_string(), array_type, false)?;
+    checker.env_mut().define_with_span(name.to_string(), array_type, false, Some(span.clone()))?;
     Ok(())
 }
 
-fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Expr) -> Result<(), StaticError> {
+fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Expr, span: &crate::lexer::Span) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
     let init_type = checker.check_expression(init)?;
 
@@ -225,7 +258,7 @@ fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, i
         }
     }
 
-    checker.env_mut().define(name.to_string(), var_type, true)?;
+    checker.env_mut().define_with_span(name.to_string(), var_type, true, Some(span.clone()))?;
     Ok(())
 }
 
@@ -271,14 +304,14 @@ fn check_if(checker: &mut TypeChecker, cond: &Expr, then: &[Stmt], else_: &Optio
 
     checker.env_mut().push_scope();
     for stmt in then {
-        check_statement(checker, stmt)?;
+        check_stmt_with_diagnostics(checker, stmt)?;
     }
     checker.env_mut().pop_scope();
 
     if let Some(else_stmts) = else_ {
         checker.env_mut().push_scope();
         for stmt in else_stmts {
-            check_statement(checker, stmt)?;
+            check_stmt_with_diagnostics(checker, stmt)?;
         }
         checker.env_mut().pop_scope();
     }
@@ -303,7 +336,7 @@ fn check_switch(checker: &mut TypeChecker, expr: &Expr, cases: &[SwitchCase]) ->
 
         checker.env_mut().push_scope();
         for stmt in &case.body {
-            check_statement(checker, stmt)?;
+            check_stmt_with_diagnostics(checker, stmt)?;
         }
         checker.env_mut().pop_scope();
     }
@@ -405,7 +438,7 @@ fn check_for(checker: &mut TypeChecker, var: &str, ty: &ClassicalType, iter: &Fo
     checker.env_mut().push_scope();
     checker.env_mut().define(var.to_string(), var_type, true)?;
     for stmt in body {
-        check_statement(checker, stmt)?;
+        check_stmt_with_diagnostics(checker, stmt)?;
     }
     checker.env_mut().pop_scope();
 
@@ -421,7 +454,7 @@ fn check_while(checker: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<
 
     checker.env_mut().push_scope();
     for stmt in body {
-        check_statement(checker, stmt)?;
+        check_stmt_with_diagnostics(checker, stmt)?;
     }
     checker.env_mut().pop_scope();
 
@@ -479,10 +512,10 @@ fn analyze_return_paths(stmts: &[Stmt]) -> ReturnState {
 }
 
 fn analyze_stmt_return(stmt: &Stmt) -> ReturnState {
-    match stmt {
-        Stmt::Return(_) => ReturnState::AlwaysReturns,
+    match &stmt.kind {
+        StmtKind::Return(_) => ReturnState::AlwaysReturns,
 
-        Stmt::If { then, else_, .. } => {
+        StmtKind::If { then, else_, .. } => {
             let then_state = analyze_return_paths(then);
 
             if let Some(else_stmts) = else_ {
@@ -495,9 +528,9 @@ fn analyze_stmt_return(stmt: &Stmt) -> ReturnState {
             }
         }
 
-        Stmt::Block(stmts) => analyze_return_paths(stmts),
+        StmtKind::Block(stmts) => analyze_return_paths(stmts),
 
-        Stmt::Switch { cases, .. } => {
+        StmtKind::Switch { cases, .. } => {
             if cases.is_empty() { return ReturnState::NeverReturns; }
 
             let mut all_return = true;
@@ -520,7 +553,7 @@ fn analyze_stmt_return(stmt: &Stmt) -> ReturnState {
             else { ReturnState::NeverReturns }
         }
 
-        Stmt::For { body, .. } => {
+        StmtKind::For { body, .. } => {
             let body_state = analyze_return_paths(body);
             match body_state {
                 ReturnState::AlwaysReturns | ReturnState::MayReturn => ReturnState::MayReturn,
@@ -528,7 +561,7 @@ fn analyze_stmt_return(stmt: &Stmt) -> ReturnState {
             }
         }
 
-        Stmt::While { body, .. } => {
+        StmtKind::While { body, .. } => {
             let body_state = analyze_return_paths(body);
             match body_state {
                 ReturnState::AlwaysReturns | ReturnState::MayReturn => ReturnState::MayReturn,
@@ -558,7 +591,7 @@ fn combine_branch_states(branch1: ReturnState, branch2: ReturnState) -> ReturnSt
     }
 }
 
-pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt]) -> Result<(), StaticError> {
+pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return_type: &Option<ClassicalType>, body: &[Stmt], span: Option<crate::lexer::Span>) -> Result<(), StaticError> {
     let param_types: Vec<Type> = params.iter()
         .map(|p| Type::from_param_type(&p.ty))
         .collect();
@@ -571,6 +604,7 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
         name: name.to_string(),
         params: param_types.clone(),
         return_type: ret_type.clone(),
+        definition_span: span,
     };
     checker.env_mut().register_function(signature)?;
     checker.set_function_context(name.to_string(), ret_type.clone());
@@ -580,7 +614,9 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
         checker.env_mut().define(param.name.clone(), param_type.clone(), false)?;
     }
 
-    for stmt in body { check_statement(checker, stmt)?; }
+    for stmt in body {
+        check_stmt_with_diagnostics(checker, stmt)?;
+    }
 
     checker.env_mut().pop_scope();
     checker.clear_function_context();
@@ -601,8 +637,9 @@ fn check_gate_def(
     params: &[String],
     qubits: &[String],
     body: &[Stmt],
+    span: Option<Span>,
 ) -> Result<(), StaticError> {
-    check_gate_def_impl(checker, name, params, qubits, body, true)
+    check_gate_def_impl(checker, name, params, qubits, body, true, span)
 }
 
 pub(crate) fn check_gate_def_impl(
@@ -612,11 +649,13 @@ pub(crate) fn check_gate_def_impl(
     qubits: &[String],
     body: &[Stmt],
     check_body: bool,
+    span: Option<Span>,
 ) -> Result<(), StaticError> {
     let signature = GateSignature {
         name: name.to_string(),
         params: params.to_vec(),
         qubits: qubits.to_vec(),
+        definition_span: span,
     };
     checker.env_mut().register_gate(signature)?;
     
@@ -633,7 +672,7 @@ pub(crate) fn check_gate_def_impl(
     }
 
     for stmt in body {
-        check_statement(checker, stmt)?;
+        check_stmt_with_diagnostics(checker, stmt)?;
     }
 
     checker.env_mut().pop_scope();
@@ -738,12 +777,12 @@ fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &St
     })?;
 
     for stmt in &program.statements {
-        match stmt {
-            Stmt::GateDef { name, params, qubits, body } => {
-                check_gate_def_impl(checker, name, params, qubits, body, false)?;
+        match &stmt.kind {
+            StmtKind::GateDef { name, params, qubits, body } => {
+                check_gate_def_impl(checker, name, params, qubits, body, false, None)?;
             }
-            Stmt::Def { name, params, return_type, body } => {
-                check_def(checker, name, params, return_type, body)?;
+            StmtKind::Def { name, params, return_type, body } => {
+                check_def(checker, name, params, return_type, body, None)?;
             }
             _ => {}
         }

@@ -1,5 +1,6 @@
 use crate::type_checker::static_error::StaticError;
 use std::fmt;
+use crate::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
@@ -15,6 +16,7 @@ pub struct Diagnostic {
     pub message: String,
     pub line: Option<usize>,
     pub column: Option<usize>,
+    pub span: Option<Span>,
 }
 
 impl Diagnostic {
@@ -24,6 +26,7 @@ impl Diagnostic {
             message,
             line: None,
             column: None,
+            span: None,
         }
     }
 
@@ -33,6 +36,7 @@ impl Diagnostic {
             message,
             line: None,
             column: None,
+            span: None,
         }
     }
 
@@ -42,8 +46,19 @@ impl Diagnostic {
         self
     }
 
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span.clone());
+        self.line = Some(span.line);
+        self.column = Some(span.col);
+        self
+    }
+
     pub fn from_type_error(error: StaticError) -> Self {
         Self::error(error.to_string())
+    }
+
+    pub fn from_type_error_with_span(error: StaticError, span: Span) -> Self {
+        Self::error(error.to_string()).with_span(span)
     }
 }
 

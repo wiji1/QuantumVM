@@ -75,3 +75,16 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+impl ParseError {
+    pub fn span(&self) -> Option<&Span> {
+        match self {
+            ParseError::UnexpectedToken { span, .. } => Some(span),
+            ParseError::InvalidLiteral { span, .. } => Some(span),
+            ParseError::InvalidVersion { span, .. } => Some(span),
+            ParseError::InvalidStatement { span, .. } => Some(span),
+            ParseError::TypeError { span, .. } => Some(span),
+            ParseError::UnexpectedEof { .. } => None,
+        }
+    }
+}

@@ -1,8 +1,9 @@
 use std::fmt::Formatter;
+use crate::lexer::Span;
 use crate::parser::supporting_types::{BinaryOp, ClassicalType, GateOperand, IndexedIdent, UnaryOp};
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum ExprKind {
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -24,8 +25,20 @@ pub enum Expr {
     Range { start: Option<Box<Expr>>, stop: Option<Box<Expr>>, step: Option<Box<Expr>> },
 }
 
+#[derive(Debug, Clone)]
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        write!(f, "{:?}", self.kind)
     }
 }

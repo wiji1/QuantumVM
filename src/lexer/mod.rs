@@ -57,7 +57,7 @@ pub struct Token {
 }
 
 impl Lexer  {
-    pub(crate) fn new(payload: String) -> Lexer {
+    pub fn new(payload: String) -> Lexer {
         Lexer { payload, current_line: 0, tokens: vec![], in_block_comment: false }
     }
 

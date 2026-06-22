@@ -13,8 +13,8 @@ use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
 use crate::lexer::Lexer;
-use crate::parser::expression::Expr;
-use crate::parser::statement::Stmt;
+use crate::parser::expression::{Expr, ExprKind};
+use crate::parser::statement::{Stmt, StmtKind};
 use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
 use crate::parser::{Parser, Program};
 use std::collections::{HashMap, HashSet};
@@ -248,42 +248,42 @@ impl Interpreter {
     }
 
     fn interpret_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        match stmt {
-            Stmt::QuantumDecl { .. } => self.interpret_quantum_decl(stmt),
-            Stmt::ClassicalDecl { .. } => self.interpret_classical_declaration(stmt),
-            Stmt::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
-            Stmt::ConstDecl { .. } => self.interpret_const_declaration(stmt),
-            Stmt::GateCall { .. } => self.interpret_gate_call(stmt),
-            Stmt::If { .. } => self.interpret_if(stmt),
-            Stmt::Switch { .. } => self.interpret_switch(stmt),
-            Stmt::For { .. } => self.interpret_for(stmt),
-            Stmt::While { .. } => self.interpret_while(stmt),
-            Stmt::IoDecl { .. } => self.interpret_io_decl(stmt),
-            Stmt::Include(s) => self.interpret_include(s),
-            Stmt::IncludeFromSrc(_, s) => self.interpret_include_from_src(s),
-            Stmt::Let { .. } => self.interpret_let(stmt),
-            Stmt::Barrier { .. } => Ok(ControlFlow::None),
-            Stmt::Pragma => Ok(ControlFlow::None),
-            Stmt::Continue => Ok(ControlFlow::Continue),
-            Stmt::Break => Ok(ControlFlow::Break),
-            Stmt::Reset { qubit } => {
+        match &stmt.kind {
+            StmtKind::QuantumDecl { .. } => self.interpret_quantum_decl(stmt),
+            StmtKind::ClassicalDecl { .. } => self.interpret_classical_declaration(stmt),
+            StmtKind::ArrayDecl { .. } => self.interpret_array_declaration(stmt),
+            StmtKind::ConstDecl { .. } => self.interpret_const_declaration(stmt),
+            StmtKind::GateCall { .. } => self.interpret_gate_call(stmt),
+            StmtKind::If { .. } => self.interpret_if(stmt),
+            StmtKind::Switch { .. } => self.interpret_switch(stmt),
+            StmtKind::For { .. } => self.interpret_for(stmt),
+            StmtKind::While { .. } => self.interpret_while(stmt),
+            StmtKind::IoDecl { .. } => self.interpret_io_decl(stmt),
+            StmtKind::Include(s) => self.interpret_include(s),
+            StmtKind::IncludeFromSrc(_, s) => self.interpret_include_from_src(s),
+            StmtKind::Let { .. } => self.interpret_let(stmt),
+            StmtKind::Barrier { .. } => Ok(ControlFlow::None),
+            StmtKind::Pragma => Ok(ControlFlow::None),
+            StmtKind::Continue => Ok(ControlFlow::Continue),
+            StmtKind::Break => Ok(ControlFlow::Break),
+            StmtKind::Reset { qubit } => {
                 let qubit_indices = self.resolve_qubits(qubit)?;
                 let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
                 for qubit_index in qubit_indices { sv.reset_qubit(qubit_index); }
                 Ok(ControlFlow::None)
             }
-            Stmt::ExpressionStatement(expr) => {
+            StmtKind::ExpressionStatement(expr) => {
                 self.evaluate_expression(expr)?;
                 Ok(ControlFlow::None)
             }
-            Stmt::Return(expr) => {
+            StmtKind::Return(expr) => {
                 let value = match expr {
                     Some(e) => self.evaluate_expression(e)?,
                     None => Value::Void,
                 };
                 Ok(ControlFlow::Return(value))
             },
-            Stmt::GateDef { name, params, qubits, body } => {
+            StmtKind::GateDef { name, params, qubits, body } => {
                 if self.functions.contains_key(name) {
                     return Err(RuntimeError::DuplicateGate(name.to_string()));
                 }
@@ -295,13 +295,13 @@ impl Interpreter {
 
                 Ok(ControlFlow::None)
             },
-            Stmt::Assign { value, .. } => {
-                match value {
-                    Expr::Measure(_) => self.interpret_measure(stmt),
+            StmtKind::Assign { value, .. } => {
+                match &value.kind {
+                    ExprKind::Measure(_) => self.interpret_measure(stmt),
                     _ => self.interpret_assignment(stmt)
                 }
             },
-            Stmt::Def { name, params, return_type, body } => {
+            StmtKind::Def { name, params, return_type, body } => {
                 if self.functions.contains_key(name) {
                     return Err(RuntimeError::DuplicateFunction(name.to_string()));
                 }
@@ -312,18 +312,18 @@ impl Interpreter {
                 });
                 Ok(ControlFlow::None)
             }
-            Stmt::Block(stmts) => {
+            StmtKind::Block(stmts) => {
                 self.push_scope();
                 let flow = self.interpret_statements(stmts)?;
                 self.pop_scope();
 
                 Ok(flow)
             },
-            Stmt::Extern { name } => {
+            StmtKind::Extern { name } => {
                 self.functions.insert(name.clone(), Function::Extern);
                 Ok(ControlFlow::None)
             }
-            Stmt::NoOp => Ok(ControlFlow::None)
+            StmtKind::NoOp => Ok(ControlFlow::None)
         }
     }
 
@@ -339,7 +339,7 @@ impl Interpreter {
     }
 
     fn interpret_classical_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ClassicalDecl { ty, name, init } = stmt else {
+        let StmtKind::ClassicalDecl { ty, name, init } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -360,7 +360,7 @@ impl Interpreter {
     }
 
     fn interpret_array_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ArrayDecl { ty, name, size, init} = stmt else {
+        let StmtKind::ArrayDecl { ty, name, size, init} = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -396,7 +396,7 @@ impl Interpreter {
     }
 
     fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::ConstDecl { ty, name, init } = stmt else {
+        let StmtKind::ConstDecl { ty: _, name, init } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -408,32 +408,32 @@ impl Interpreter {
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
 
-        match expr {
-            Expr::Int(i) => { Ok(Value::Int(*i)) }
-            Expr::Float(f) => { Ok(Value::Float(*f)) }
-            Expr::Bool(b) => { Ok(Value::Bool(*b)) }
-            Expr::Array(a) => { self.evaluate_array(a) }
-            Expr::Imaginary(f) => { Ok(Value::Complex(0.0, *f)) }
-            Expr::Timing(s) => { Ok(Value::Timing(s.clone())) }
-            Expr::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::Int(i) => { Ok(Value::Int(*i)) }
+            ExprKind::Float(f) => { Ok(Value::Float(*f)) }
+            ExprKind::Bool(b) => { Ok(Value::Bool(*b)) }
+            ExprKind::Array(a) => { self.evaluate_array(a) }
+            ExprKind::Imaginary(f) => { Ok(Value::Complex(0.0, *f)) }
+            ExprKind::Timing(s) => { Ok(Value::Timing(s.clone())) }
+            ExprKind::Bits(v, w) => { Ok(Value::Bits {value: *v, width: *w})}
+            ExprKind::Ident(name) => {
                 if let Some(val) = self.lookup(name) { Ok(val.clone()) }
                 else if let Some(indices) = self.qubit_map.get(name) {
                     Ok(Value::Qubit(indices.clone()))
                 } else { Err(RuntimeError::UndefinedVariable(name.clone())) }
             }
-            Expr::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
-            Expr::Measure(op) => { self.evaluate_measure(op) }
-            Expr::Unary { .. } => { self.evaluate_unary(expr) }
-            Expr::Binary { .. } => { self.evaluate_binary(expr) }
-            Expr::Call { name, args } => { self.call_function(name, args) }
-            Expr::Cast { ty, expr } => {
-                let value = self.evaluate_expression(expr)?;
+            ExprKind::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
+            ExprKind::Measure(op) => { self.evaluate_measure(op) }
+            ExprKind::Unary { .. } => { self.evaluate_unary(expr) }
+            ExprKind::Binary { .. } => { self.evaluate_binary(expr) }
+            ExprKind::Call { name, args } => { self.call_function(name, args) }
+            ExprKind::Cast { ty, expr: inner_expr } => {
+                let value = self.evaluate_expression(inner_expr)?;
                 let target_type = Type::from_classical_type(ty);
                 cast_value(value, &target_type)
                     .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))
             }
-            Expr::Range { .. } => { self.evaluate_range(expr) }
+            ExprKind::Range { .. } => { self.evaluate_range(expr) }
         }
     }
 
@@ -539,7 +539,7 @@ impl Interpreter {
     }
 
     fn evaluate_unary(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
-        let Expr::Unary { op, expr } = expr else {
+        let ExprKind::Unary { op, expr } = &expr.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -573,7 +573,7 @@ impl Interpreter {
     }
 
     fn evaluate_binary(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
-        let Expr::Binary { op, lhs, rhs } = expr else {
+        let ExprKind::Binary { op, lhs, rhs } = &expr.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -651,7 +651,7 @@ impl Interpreter {
     }
 
     fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::Assign { target, op, value } = stmt else {
+        let StmtKind::Assign { target, op, value } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -910,7 +910,7 @@ impl Interpreter {
     }
 
     fn interpret_if(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::If { cond, then, else_ } = stmt else {
+        let StmtKind::If { cond, then, else_ } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -946,7 +946,7 @@ impl Interpreter {
     }
 
     fn interpret_switch(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::Switch { expr, cases } = stmt else {
+        let StmtKind::Switch { expr, cases } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -987,7 +987,7 @@ impl Interpreter {
     }
 
     fn interpret_while(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::While { cond, body } = stmt else {
+        let StmtKind::While { cond, body } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -1019,7 +1019,7 @@ impl Interpreter {
     }
 
     fn interpret_for(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::For { var, ty, iter, body } = stmt else {
+        let StmtKind::For { var, ty, iter, body } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -1143,7 +1143,7 @@ impl Interpreter {
 
         match func {
             Function::BuiltIn(f) => f.call(evaluated_args),
-            Function::UserDefined { params, return_type, body } => {
+            Function::UserDefined { params, return_type: _, body } => {
                 if args.len() != params.len() {
                     return Err(RuntimeError::InvalidArgCount(params.len(), args.len()));
                 }
@@ -1202,7 +1202,7 @@ impl Interpreter {
 
 
     fn interpret_io_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::IoDecl { direction, ty, name } = stmt else {
+        let StmtKind::IoDecl { direction, ty, name } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -1271,7 +1271,7 @@ impl Interpreter {
     }
 
     fn interpret_quantum_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::QuantumDecl { name, size } = stmt else {
+        let StmtKind::QuantumDecl { name, size } = &stmt.kind else {
             unreachable!();
         };
 
@@ -1303,8 +1303,8 @@ impl Interpreter {
                 if ident.indices.is_empty() {
                     Ok(indices.clone())
                 } else {
-                    let index = match &ident.indices[0] {
-                        Expr::Int(i) => *i as usize,
+                    let index = match &ident.indices[0].kind {
+                        ExprKind::Int(i) => *i as usize,
                         _ => match self.evaluate_expression(&ident.indices[0])? {
                             Value::Int(i) => i as usize,
                             _ => return Err(RuntimeError::TypeMismatch("qubit index must be int".to_string(), )),
@@ -1325,7 +1325,7 @@ impl Interpreter {
     }
 
     fn interpret_gate_call(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::GateCall { name, modifiers, params, qubits } = stmt else {
+        let StmtKind::GateCall { name, modifiers, params, qubits } = &stmt.kind else {
             unreachable!();
         };
 
@@ -1359,7 +1359,7 @@ impl Interpreter {
             let mut args: Vec<Expr> = params.clone();
             for qubit in qubits {
                 match qubit {
-                    GateOperand::Ident(ident) => args.push(Expr::IndexedIdent(ident.clone())),
+                    GateOperand::Ident(ident) => args.push(Expr::new(ExprKind::IndexedIdent(ident.clone()), crate::lexer::Span { line: 0, col: 0, len: 0 })),
                     GateOperand::HardwareQubit(_) => {}
                 }
             }
@@ -1514,11 +1514,11 @@ impl Interpreter {
     }
 
     fn interpret_measure(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::Assign { target, value, .. } = stmt else {
+        let StmtKind::Assign { target, value, .. } = &stmt.kind else {
             unreachable!();
         };
 
-        let Expr::Measure(operand) = value else {
+        let ExprKind::Measure(operand) = &value.kind else {
             unreachable!();
         };
 
@@ -1557,7 +1557,7 @@ impl Interpreter {
     }
 
     fn evaluate_range(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
-        let Expr::Range { start, stop, step } = expr else {
+        let ExprKind::Range { start, stop, step } = &expr.kind else {
             unreachable!();
         };
         Ok(Value::Range {
@@ -1568,7 +1568,7 @@ impl Interpreter {
     }
 
     fn interpret_let(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let Stmt::Let { name, value} = stmt else {
+        let StmtKind::Let { name, value} = &stmt.kind else {
             unreachable!();
         };
 

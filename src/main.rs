@@ -1,4 +1,4 @@
-use quantum_vm::{run_file, RunConfig, ExecutionResult};
+use quantum_vm::{run_file, ExecutionResult};
 use std::env;
 
 fn main() {

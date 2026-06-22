@@ -1,6 +1,6 @@
 use crate::interpreter::runtime_error::RuntimeError;
 use crate::interpreter::value::Value;
-use crate::parser::expression::Expr;
+use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::statement::Stmt;
 
 #[derive(Debug, Clone)]
@@ -106,9 +106,11 @@ impl ClassicalType {
         match self {
             ClassicalType::Bit(_) => {
                 let width = match size {
-                    Some(Expr::Int(n)) => n as usize,
+                    Some(ref expr) => match &expr.kind {
+                        ExprKind::Int(n) => *n as usize,
+                        _ => return Err(RuntimeError::InvalidSize),
+                    },
                     None => 1,
-                    _ => return Err(RuntimeError::InvalidSize),
                 };
 
                 Ok(Value::Bits { value: 0, width })

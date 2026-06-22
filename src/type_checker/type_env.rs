@@ -1,3 +1,4 @@
+use crate::lexer::Span;
 use crate::type_checker::type_repr::Type;
 use std::collections::{HashMap, HashSet};
 use crate::type_checker::static_error::StaticError;
@@ -7,6 +8,7 @@ pub struct TypeBinding {
     pub ty: Type,
     pub is_const: bool,
     pub is_initialized: bool,
+    pub definition_span: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -14,6 +16,7 @@ pub struct FunctionSignature {
     pub name: String,
     pub params: Vec<Type>,
     pub return_type: Type,
+    pub definition_span: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +24,7 @@ pub struct GateSignature {
     pub name: String,
     pub params: Vec<String>,
     pub qubits: Vec<String>,
+    pub definition_span: Option<Span>,
 }
 
 pub struct TypeEnv {
@@ -67,6 +71,7 @@ impl TypeEnv {
             name: name.to_string(),
             params: vec![Type::Float(None)],
             return_type: Type::Float(None),
+            definition_span: None,
         };
 
         self.functions.insert("sin".to_string(), float_fn("sin"));
@@ -84,24 +89,28 @@ impl TypeEnv {
             name: "pow".to_string(),
             params: vec![Type::Float(None), Type::Float(None)],
             return_type: Type::Float(None),
+            definition_span: None,
         });
 
         self.functions.insert("mod".to_string(), FunctionSignature {
             name: "mod".to_string(),
             params: vec![Type::Int(None), Type::Int(None)],
             return_type: Type::Int(None),
+            definition_span: None,
         });
 
         self.functions.insert("popcount".to_string(), FunctionSignature {
             name: "popcount".to_string(),
             params: vec![Type::Bit(None)],
             return_type: Type::Int(None),
+            definition_span: None,
         });
 
         self.functions.insert("sizeof".to_string(), FunctionSignature {
             name: "sizeof".to_string(),
             params: vec![Type::Unknown],
             return_type: Type::Int(None),
+            definition_span: None,
         });
     }
 
@@ -110,12 +119,14 @@ impl TypeEnv {
             name: "U".to_string(),
             params: vec!["theta".to_string(), "phi".to_string(), "lambda".to_string()],
             qubits: vec!["q".to_string()],
+            definition_span: None,
         });
 
         self.gates.insert("gphase".to_string(), GateSignature {
             name: "gphase".to_string(),
             params: vec!["theta".to_string()],
             qubits: vec![],
+            definition_span: None,
         });
     }
 
@@ -128,10 +139,15 @@ impl TypeEnv {
     }
 
     pub fn define(&mut self, name: String, ty: Type, is_const: bool) -> Result<(), StaticError> {
+        self.define_with_span(name, ty, is_const, None)
+    }
+
+    pub fn define_with_span(&mut self, name: String, ty: Type, is_const: bool, span: Option<Span>) -> Result<(), StaticError> {
         let binding = TypeBinding {
             ty,
             is_const,
             is_initialized: true,
+            definition_span: span,
         };
 
         if let Some(scope) = self.scopes.last_mut() {
@@ -147,10 +163,15 @@ impl TypeEnv {
     }
 
     pub fn define_uninitialized(&mut self, name: String, ty: Type, is_const: bool) {
+        self.define_uninitialized_with_span(name, ty, is_const, None)
+    }
+
+    pub fn define_uninitialized_with_span(&mut self, name: String, ty: Type, is_const: bool, span: Option<Span>) {
         let binding = TypeBinding {
             ty,
             is_const,
             is_initialized: false,
+            definition_span: span,
         };
 
         if let Some(scope) = self.scopes.last_mut() {

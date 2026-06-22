@@ -1,24 +1,28 @@
-mod lexer;
-mod parser;
+pub mod lexer;
+pub mod parser;
 mod interpreter;
 mod type_checker;
 mod coercion;
 mod input_resolver;
 
+pub mod lsp_support;
+
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::type_checker::{TypeCheckConfig, TypeChecker};
 use std::path::PathBuf;
-use crate::type_checker::diagnostics::DiagnosticSeverity;
 use crate::input_resolver::InputResolver;
 use crate::parser::supporting_types::{IoDirection, ClassicalType};
-use crate::parser::statement::Stmt;
+use crate::parser::statement::StmtKind;
 use crate::parser::Program;
 use std::collections::HashMap;
 
 pub use crate::interpreter::value::Value;
 pub use crate::parser::parse_error::ParseError;
+pub use crate::lsp_support::LspQuery;
+pub use crate::type_checker::{TypeChecker, TypeCheckConfig, TypeCheckResult};
+pub use crate::type_checker::diagnostics::DiagnosticSeverity;
+pub use crate::lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionResult {
@@ -144,7 +148,7 @@ fn extract_input_declarations(program: &Program) -> HashMap<String, ClassicalTyp
     let mut declarations = HashMap::new();
 
     for stmt in &program.statements {
-        if let Stmt::IoDecl { direction, ty, name } = stmt {
+        if let StmtKind::IoDecl { direction, ty, name } = &stmt.kind {
             if matches!(direction, IoDirection::Input) {
                 declarations.insert(name.clone(), ty.clone());
             }
