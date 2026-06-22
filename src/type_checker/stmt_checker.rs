@@ -9,14 +9,10 @@ use crate::type_checker::TypeChecker;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
-/// Represents the control flow state regarding return statements
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReturnState {
-    /// All execution paths guarantee a return
     AlwaysReturns,
-    /// Some paths may return, others may not
     MayReturn,
-    /// No return statements on any path
     NeverReturns,
 }
 

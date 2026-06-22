@@ -144,6 +144,8 @@ impl Interpreter {
     }
 
     fn normalize_index(idx: i64, len: usize) -> Result<usize, RuntimeError> {
+        if idx < 0 { return Err(RuntimeError::InvalidIndex); }
+        
         let idx_usize = idx as usize;
         if idx_usize >= len { return Err(RuntimeError::IndexOutOfBounds(idx_usize, len)); }
         Ok(idx_usize)

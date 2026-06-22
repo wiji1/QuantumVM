@@ -13,6 +13,7 @@ pub enum RuntimeError {
     DuplicateFunction(String),
     DuplicateGate(String),
     IndexOutOfBounds(usize, usize),
+    InvalidIndex,
     InvalidArgCount(usize, usize),
     UndefinedFunction(String),
     InvalidCall(String),
