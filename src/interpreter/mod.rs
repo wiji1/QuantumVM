@@ -12,7 +12,7 @@ use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::{StateVector, C64};
 use crate::interpreter::runtime_error::{RuntimeError, RuntimeErrorKind};
 use crate::interpreter::value::Value;
-use crate::lexer::Lexer;
+    use crate::lexer::{Lexer, Span};
 use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::statement::{Stmt, StmtKind};
 use crate::parser::supporting_types::{AssignOp, BinaryOp, ClassicalType, ForIter, GateModifier, GateOperand, IndexedIdent, IoDirection, SwitchCase, UnaryOp};
@@ -23,7 +23,7 @@ use crate::coercion::{cast_value, coerce_to_bool, coerce_value, infer_type_from_
 use crate::type_checker::type_repr::Type;
 
 macro_rules! numeric_op {
-    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr) => {
+    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr, $span:expr) => {
         match ($lhs, $rhs) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a $op b)),
             (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a $op b)),
@@ -36,17 +36,17 @@ macro_rules! numeric_op {
             (Value::Complex(re, im), Value::Float(b)) => Ok(Value::Complex(re $op b, im)),
             (Value::Int(a), Value::Complex(re, im)) => Ok(Value::Complex(a as f64 $op re, im)),
             (Value::Complex(re, im), Value::Int(b)) => Ok(Value::Complex(re $op b as f64, im)),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string()))),
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation($expr.to_string()), $span)),
         }
     };
 }
 
 macro_rules! bitwise_op {
-    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr) => {
+    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr, $span:expr) => {
         match ($lhs, $rhs) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a $op b)),
             (Value::Bits { value: a, width: wa }, Value::Bits { value: b, width: wb }) => {
-                if wa != wb { return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch($expr.to_string()))); }
+                if wa != wb { return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch($expr.to_string()), $span)); }
                 Ok(Value::Bits { value: a $op b, width: wa })
             },
             (Value::Bits { value: a, width: wa }, Value::Int(b)) => {
@@ -57,13 +57,13 @@ macro_rules! bitwise_op {
                 let mask = (1u64 << wb) - 1;
                 Ok(Value::Bits { value: ((a as u64) $op b) & mask, width: wb })
             },
-            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string())))
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation($expr.to_string()), $span))
         }
     };
 }
 
 macro_rules! comparison_op {
-    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr) => {
+    ($lhs:expr, $rhs:expr, $op:tt, $expr:expr, $span:expr) => {
         match ($lhs, $rhs) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a $op b)),
             (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a $op b)),
@@ -89,7 +89,7 @@ macro_rules! comparison_op {
                 let rhs_val: f64 = b as f64;
                 Ok(Value::Bool(a $op rhs_val))
             },
-            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string())))
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation($expr.to_string()), $span))
         }
     };
 }
@@ -143,11 +143,11 @@ impl Interpreter {
         self.state_vector.clone()
     }
 
-    fn normalize_index(idx: i64, len: usize) -> Result<usize, RuntimeError> {
-        if idx < 0 { return Err(RuntimeError::new(RuntimeErrorKind::InvalidIndex)); }
-        
+    fn normalize_index(idx: i64, len: usize, span: Span) -> Result<usize, RuntimeError> {
+        if idx < 0 { return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidIndex, span.clone())); }
+
         let idx_usize = idx as usize;
-        if idx_usize >= len { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx_usize, len))); }
+        if idx_usize >= len { return Err(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(idx_usize, len), span)); }
         Ok(idx_usize)
     }
 
@@ -260,8 +260,8 @@ impl Interpreter {
             StmtKind::Continue => Ok(ControlFlow::Continue),
             StmtKind::Break => Ok(ControlFlow::Break),
             StmtKind::Reset { qubit } => {
-                let qubit_indices = self.resolve_qubits(qubit)?;
-                let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
+                let qubit_indices = self.resolve_qubits(qubit, stmt.span.clone())?;
+                let sv = self.state_vector.as_mut().ok_or(RuntimeError::with_span(RuntimeErrorKind::NoStateVector, stmt.span.clone()))?;
                 for qubit_index in qubit_indices { sv.reset_qubit(qubit_index); }
                 Ok(ControlFlow::None)
             }
@@ -345,7 +345,7 @@ impl Interpreter {
 
         let target_type = Type::from_classical_type(ty);
         let coerced_value = coerce_value(init_value, &target_type)
-            .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+            .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), stmt.span.clone()))?;
 
         self.define(name.to_string(), coerced_value, false)?;
 
@@ -363,11 +363,11 @@ impl Interpreter {
             let evaluated = self.evaluate_expression(size_expr)?;
             match evaluated {
                 Value::Int(i) => dimensions.push(i),
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)),
+                _ => return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidSize, size_expr.span.clone())),
             }
         }
 
-        if dimensions.is_empty() || dimensions.len() > 7 { return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)); }
+        if dimensions.is_empty() || dimensions.len() > 7 { return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidSize, stmt.span.clone())); }
 
         let value = match init {
             Some(expr) => self.evaluate_expression(expr)?,
@@ -413,18 +413,18 @@ impl Interpreter {
                 if let Some(val) = self.lookup(name) { Ok(val.clone()) }
                 else if let Some(indices) = self.qubit_map.get(name) {
                     Ok(Value::Qubit(indices.clone()))
-                } else { Err(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(name.clone()))) }
+                } else { Err(RuntimeError::with_span(RuntimeErrorKind::UndefinedVariable(name.clone()), expr.span.clone())) }
             }
-            ExprKind::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
-            ExprKind::Measure(op) => { self.evaluate_measure(op) }
+            ExprKind::IndexedIdent(i) => { self.evaluate_indexed_ident(i, expr.span.clone()) }
+            ExprKind::Measure(op) => { self.evaluate_measure(op, expr.span.clone()) }
             ExprKind::Unary { .. } => { self.evaluate_unary(expr) }
             ExprKind::Binary { .. } => { self.evaluate_binary(expr) }
-            ExprKind::Call { name, args } => { self.call_function(name, args) }
+            ExprKind::Call { name, args } => { self.call_function(name, args, expr.span.clone()) }
             ExprKind::Cast { ty, expr: inner_expr } => {
                 let value = self.evaluate_expression(inner_expr)?;
                 let target_type = Type::from_classical_type(ty);
                 cast_value(value, &target_type)
-                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))
+                    .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), expr.span.clone()))
             }
             ExprKind::Range { .. } => { self.evaluate_range(expr) }
         }
@@ -439,28 +439,29 @@ impl Interpreter {
         Ok(Value::Array(vec))
     }
 
-    fn evaluate_indexed_ident(&mut self, ident: &IndexedIdent) -> Result<Value, RuntimeError> {
+    fn evaluate_indexed_ident(&mut self, ident: &IndexedIdent, span: Span) -> Result<Value, RuntimeError> {
         if let Some(indices) = self.qubit_map.get(&ident.name).cloned() {
-            return self.evaluate_qubit_ident(indices, &ident.indices);
+            return self.evaluate_qubit_ident(indices, &ident.indices, span);
         }
 
         let mut value = self.lookup(&ident.name).cloned()
-            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(ident.name.clone())))?;
+            .ok_or(RuntimeError::with_span(RuntimeErrorKind::UndefinedVariable(ident.name.clone()), span.clone()))?;
 
-        for expr in &ident.indices {
+        for (idx, expr) in ident.indices.iter().enumerate() {
             let index_val = self.evaluate_expression(expr)?;
+            let index_span = if idx < ident.indices.len() { expr.span.clone() } else { span.clone() };
             value = match (value, index_val) {
                 (Value::Array(arr), Value::Int(i)) => {
                     let len = arr.len();
-                    let normalized_idx = Self::normalize_index(i, len)?;
+                    let normalized_idx = Self::normalize_index(i, len, index_span.clone())?;
                     arr.into_iter().nth(normalized_idx)
-                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len)))?
+                        .ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len), index_span))?
                 }
                 (Value::Array(arr), Value::Range { start, stop, step }) => {
                     let len = arr.len();
-                    let start = if let Some(s) = start { Self::normalize_index(s, len)? }
+                    let start = if let Some(s) = start { Self::normalize_index(s, len, index_span.clone())? }
                     else { 0 };
-                    let stop = if let Some(s) = stop { Self::normalize_index(s, len)? }
+                    let stop = if let Some(s) = stop { Self::normalize_index(s, len, index_span.clone())? }
                     else { len - 1 };
                     let step = step.unwrap_or(1) as usize;
                     Value::Array((start..=stop).step_by(step).map(|i| arr[i].clone()).collect())
@@ -468,39 +469,40 @@ impl Interpreter {
                 (Value::Bits { value, width }, Value::Int(i)) => {
                     let normalized_idx = if i < 0 {
                         let pos = width as i64 + i;
-                        if pos < 0 { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, width))); }
+                        if pos < 0 { return Err(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(i as usize, width), index_span)); }
                         pos as usize
                     } else {
                         let idx = i as usize;
-                        if idx >= width { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx, width))); }
+                        if idx >= width { return Err(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(idx, width), index_span)); }
                         idx
                     };
                     Value::Bits { value: (value >> normalized_idx) & 1, width: 1 }
                 }
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot index with this type".to_string()))),
+                _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("cannot index with this type".to_string()), index_span)),
             };
         }
         Ok(value)
     }
 
-    fn evaluate_qubit_ident(&mut self, indices: Vec<usize>, exprs: &[Expr]) -> Result<Value, RuntimeError> {
+    fn evaluate_qubit_ident(&mut self, indices: Vec<usize>, exprs: &[Expr], span: Span) -> Result<Value, RuntimeError> {
         if exprs.is_empty() { return Ok(Value::Qubit(indices)); }
 
         let index_val = self.evaluate_expression(&exprs[0])?;
+        let index_span = exprs[0].span.clone();
 
         let selected = match index_val {
             Value::Int(i) => {
                 let qubit = indices.get(i as usize)
                     .copied()
-                    .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len())))?;
+                    .ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len()), index_span.clone()))?;
                 vec![qubit]
             }
             Value::Array(arr) => {
                 arr.into_iter().map(|val| match val {
                     Value::Int(i) => indices.get(i as usize)
                         .copied()
-                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len()))),
-                    _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit set index must be int".to_string()))),
+                        .ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len()), index_span.clone())),
+                    _ => Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("qubit set index must be int".to_string()), index_span.clone())),
                 }).collect::<Result<Vec<_>, _>>()?
             }
             Value::Range { start, stop, step } => {
@@ -508,42 +510,42 @@ impl Interpreter {
                 let stop = stop.unwrap_or(indices.len() as i64) as usize;
                 let step = step.unwrap_or(1) as usize;
                 (start..=stop).step_by(step)
-                    .map(|i| indices.get(i).copied().ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i, indices.len()))))
+                    .map(|i| indices.get(i).copied().ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(i, indices.len()), index_span.clone())))
                     .collect::<Result<Vec<_>, _>>()?
             }
             other => {
                 let coerced = coerce_value(other, &Type::Int(None))
-                    .map_err(|_| RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index must be int, range, or set".to_string())))?;
+                    .map_err(|_| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("qubit index must be int, range, or set".to_string()), index_span.clone()))?;
                 match coerced {
                     Value::Int(i) => {
                         let qubit = indices.get(i as usize)
                             .copied()
-                            .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len())))?;
+                            .ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len()), index_span.clone()))?;
                         vec![qubit]
                     }
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index coercion did not produce int".to_string()))),
+                    _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("qubit index coercion did not produce int".to_string()), index_span)),
                 }
             }
         };
 
-        if exprs.len() > 1 { return self.evaluate_qubit_ident(selected, &exprs[1..]); }
+        if exprs.len() > 1 { return self.evaluate_qubit_ident(selected, &exprs[1..], span); }
 
         Ok(Value::Qubit(selected))
     }
 
     fn evaluate_unary(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
-        let ExprKind::Unary { op, expr } = &expr.kind else {
+        let ExprKind::Unary { op, expr: inner } = &expr.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
-        let evaluated = self.evaluate_expression(&expr)?;
+        let evaluated = self.evaluate_expression(&inner)?;
 
         match op {
             UnaryOp::Neg => {
                 match evaluated {
                     Value::Int(i) => { Ok(Value::Int(-i)) }
                     Value::Float(f) => { Ok(Value::Float(-f)) }
-                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
+                    _ => { Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(format!("negation of {}", inner.to_string())), expr.span.clone())) }
                 }
             }
             UnaryOp::BitNot => {
@@ -553,13 +555,13 @@ impl Interpreter {
                         let mask = (1u64 << width) - 1;
                         Ok(Value::Bits { value: !value & mask, width })
                     }
-                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
+                    _ => { Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(format!("bitwise NOT of {}", inner.to_string())), expr.span.clone())) }
                 }
             }
             UnaryOp::LogicNot => {
                 match evaluated {
                     Value::Bool(b) => { Ok(Value::Bool(!b)) },
-                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
+                    _ => { Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(format!("logical NOT of {}", inner.to_string())), expr.span.clone())) }
                 }
             }
         }
@@ -579,38 +581,38 @@ impl Interpreter {
                 Value::Float(f) => *f == 0.0,
                 _ => false,
             };
-            if is_zero { return Err(RuntimeError::new(RuntimeErrorKind::DivideByZero)); }
+            if is_zero { return Err(RuntimeError::with_span(RuntimeErrorKind::DivideByZero, expr.span.clone())); }
         }
 
         match op {
-            BinaryOp::Add => numeric_op!(lhs_evaluated, rhs_evaluated, +, expr),
-            BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr),
-            BinaryOp::Mul => numeric_op!(lhs_evaluated, rhs_evaluated, *, expr),
+            BinaryOp::Add => numeric_op!(lhs_evaluated, rhs_evaluated, +, expr, expr.span.clone()),
+            BinaryOp::Sub => numeric_op!(lhs_evaluated, rhs_evaluated, -, expr, expr.span.clone()),
+            BinaryOp::Mul => numeric_op!(lhs_evaluated, rhs_evaluated, *, expr, expr.span.clone()),
             BinaryOp::Div => match (lhs_evaluated, rhs_evaluated) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
-                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string())))
+                _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(expr.to_string()), expr.span.clone()))
             },
-            BinaryOp::Mod => numeric_op!(lhs_evaluated, rhs_evaluated, %, expr),
+            BinaryOp::Mod => numeric_op!(lhs_evaluated, rhs_evaluated, %, expr, expr.span.clone()),
             BinaryOp::Pow => match (lhs_evaluated, rhs_evaluated) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
-                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string())))
+                _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(expr.to_string()), expr.span.clone()))
             },
-            BinaryOp::And => bitwise_op!(lhs_evaluated, rhs_evaluated, &, expr),
-            BinaryOp::Or  => bitwise_op!(lhs_evaluated, rhs_evaluated, |, expr),
-            BinaryOp::Xor => bitwise_op!(lhs_evaluated, rhs_evaluated, ^, expr),
-            BinaryOp::Shl => bitwise_op!(lhs_evaluated, rhs_evaluated, <<, expr),
-            BinaryOp::Shr => bitwise_op!(lhs_evaluated, rhs_evaluated, >>, expr),
+            BinaryOp::And => bitwise_op!(lhs_evaluated, rhs_evaluated, &, expr, expr.span.clone()),
+            BinaryOp::Or  => bitwise_op!(lhs_evaluated, rhs_evaluated, |, expr, expr.span.clone()),
+            BinaryOp::Xor => bitwise_op!(lhs_evaluated, rhs_evaluated, ^, expr, expr.span.clone()),
+            BinaryOp::Shl => bitwise_op!(lhs_evaluated, rhs_evaluated, <<, expr, expr.span.clone()),
+            BinaryOp::Shr => bitwise_op!(lhs_evaluated, rhs_evaluated, >>, expr, expr.span.clone()),
             BinaryOp::LogicAnd => {
                 let lhs_bool = coerce_to_bool(lhs_evaluated)
-                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                    .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), expr.span.clone()))?;
                 let rhs_bool = coerce_to_bool(rhs_evaluated)
-                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                    .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), expr.span.clone()))?;
 
                 match (lhs_bool, rhs_bool) {
                     (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
@@ -619,28 +621,28 @@ impl Interpreter {
             },
             BinaryOp::LogicOr => {
                 let lhs_bool = coerce_to_bool(lhs_evaluated)
-                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                    .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), expr.span.clone()))?;
                 let rhs_bool = coerce_to_bool(rhs_evaluated)
-                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                    .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), expr.span.clone()))?;
 
                 match (lhs_bool, rhs_bool) {
                     (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
                     _ => unreachable!("coerce_to_bool should always return Bool"),
                 }
             },
-            BinaryOp::Eq  => comparison_op!(lhs_evaluated, rhs_evaluated, ==, expr),
-            BinaryOp::Neq => comparison_op!(lhs_evaluated, rhs_evaluated, !=, expr),
-            BinaryOp::Lt  => comparison_op!(lhs_evaluated, rhs_evaluated, <,  expr),
-            BinaryOp::Gt  => comparison_op!(lhs_evaluated, rhs_evaluated, >,  expr),
-            BinaryOp::Leq => comparison_op!(lhs_evaluated, rhs_evaluated, <=, expr),
-            BinaryOp::Geq => comparison_op!(lhs_evaluated, rhs_evaluated, >=, expr),
-            BinaryOp::Concat => self.concatenate_values(&lhs_evaluated, &rhs_evaluated),
+            BinaryOp::Eq  => comparison_op!(lhs_evaluated, rhs_evaluated, ==, expr, expr.span.clone()),
+            BinaryOp::Neq => comparison_op!(lhs_evaluated, rhs_evaluated, !=, expr, expr.span.clone()),
+            BinaryOp::Lt  => comparison_op!(lhs_evaluated, rhs_evaluated, <,  expr, expr.span.clone()),
+            BinaryOp::Gt  => comparison_op!(lhs_evaluated, rhs_evaluated, >,  expr, expr.span.clone()),
+            BinaryOp::Leq => comparison_op!(lhs_evaluated, rhs_evaluated, <=, expr, expr.span.clone()),
+            BinaryOp::Geq => comparison_op!(lhs_evaluated, rhs_evaluated, >=, expr, expr.span.clone()),
+            BinaryOp::Concat => self.concatenate_values(&lhs_evaluated, &rhs_evaluated, expr.span.clone()),
         }
     }
 
-    fn evaluate_measure(&mut self, operand: &GateOperand) -> Result<Value, RuntimeError> {
-        let qubit_indices = self.resolve_qubits(operand)?;
-        self.measure_qubits(qubit_indices)
+    fn evaluate_measure(&mut self, operand: &GateOperand, span: Span) -> Result<Value, RuntimeError> {
+        let qubit_indices = self.resolve_qubits(operand, span.clone())?;
+        self.measure_qubits(qubit_indices, span)
     }
 
     fn interpret_assignment(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
@@ -656,34 +658,34 @@ impl Interpreter {
                 let current = if target.indices.is_empty() {
                     self.lookup(&target.name)
                         .cloned()
-                        .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(target.name.clone())))?
+                        .ok_or(RuntimeError::with_span(RuntimeErrorKind::UndefinedVariable(target.name.clone()), stmt.span.clone()))?
                 } else {
                     self.evaluate_indexed_ident(&IndexedIdent {
                         name: target.name.clone(),
                         indices: target.indices.clone(),
-                    })?
+                    }, stmt.span.clone())?
                 };
-                self.apply_binary_op(bin_op, current, rhs)?
+                self.apply_binary_op(bin_op, current, rhs, stmt.span.clone())?
             }
         };
 
         if target.indices.is_empty() {
             self.assign(&target.name, evaluated)
         } else {
-            self.assign_indexed(&target.name, &target.indices, evaluated)
+            self.assign_indexed(&target.name, &target.indices, evaluated, stmt.span.clone())
         }
     }
 
-    fn concatenate_values(&self, lhs: &Value, rhs: &Value) -> Result<Value, RuntimeError> {
+    fn concatenate_values(&self, lhs: &Value, rhs: &Value, span: Span) -> Result<Value, RuntimeError> {
         match (lhs, rhs) {
             (Value::Qubit(indices_a), Value::Qubit(indices_b)) => {
                 let set_a: HashSet<_> = indices_a.iter().collect();
                 let set_b: HashSet<_> = indices_b.iter().collect();
 
                 if set_a.intersection(&set_b).count() > 0 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::SelfConcatenation(
+                    return Err(RuntimeError::with_span(RuntimeErrorKind::SelfConcatenation(
                         "Cannot concatenate a qubit register with itself".to_string()
-                    )));
+                    ), span));
                 }
 
                 let mut result = indices_a.clone();
@@ -694,9 +696,9 @@ impl Interpreter {
             (Value::Bits { value: v1, width: w1 }, Value::Bits { value: v2, width: w2 }) => {
                 let new_width = w1 + w2;
                 if new_width > 64 {
-                    return Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(
+                    return Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(
                         format!("Bit concatenation exceeds 64-bit limit: {} + {}", w1, w2)
-                    )));
+                    ), span));
                 }
 
                 let new_value = (v2 << w1) | v1;
@@ -709,135 +711,136 @@ impl Interpreter {
                 Ok(Value::Array(result))
             }
 
-            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(
                 format!("Cannot concatenate {:?} and {:?}", lhs, rhs)
-            )))
+            ), span))
         }
     }
 
-    fn apply_binary_op(&self, op: &BinaryOp, lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+    fn apply_binary_op(&self, op: &BinaryOp, lhs: Value, rhs: Value, span: Span) -> Result<Value, RuntimeError> {
         if matches!(op, BinaryOp::Div | BinaryOp::Mod) {
             let is_zero = match &rhs {
                 Value::Int(i) => *i == 0,
                 Value::Float(f) => *f == 0.0,
                 _ => false,
             };
-            if is_zero { return Err(RuntimeError::new(RuntimeErrorKind::DivideByZero)); }
+            if is_zero { return Err(RuntimeError::with_span(RuntimeErrorKind::DivideByZero, span)); }
         }
 
         match op {
-            BinaryOp::Add => numeric_op!(lhs, rhs, +, "+="),
-            BinaryOp::Sub => numeric_op!(lhs, rhs, -, "-="),
-            BinaryOp::Mul => numeric_op!(lhs, rhs, *, "*="),
+            BinaryOp::Add => numeric_op!(lhs, rhs, +, "+=", span),
+            BinaryOp::Sub => numeric_op!(lhs, rhs, -, "-=", span),
+            BinaryOp::Mul => numeric_op!(lhs, rhs, *, "*=", span),
             BinaryOp::Div => match (lhs, rhs) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Float(a as f64 / b as f64)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
-                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation("/".to_string())))
+                _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation("/".to_string()), span))
             },
-            BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%="),
+            BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%=", span),
             BinaryOp::And => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a & b)),
                         _ => unreachable!(),
                     }
-                } else { bitwise_op!(lhs, rhs, &, "&=") }
+                } else { bitwise_op!(lhs, rhs, &, "&=", span) }
             },
             BinaryOp::Or => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a | b)),
                         _ => unreachable!(),
                     }
-                } else { bitwise_op!(lhs, rhs, |, "|=") }
+                } else { bitwise_op!(lhs, rhs, |, "|=", span) }
             },
             BinaryOp::Xor => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                        .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), span.clone()))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a ^ b)),
                         _ => unreachable!(),
                     }
-                } else { bitwise_op!(lhs, rhs, ^, "^=") }
+                } else { bitwise_op!(lhs, rhs, ^, "^=", span) }
             },
-            BinaryOp::Shl => bitwise_op!(lhs, rhs, <<, "<<="),
-            BinaryOp::Shr => bitwise_op!(lhs, rhs, >>, ">>="),
+            BinaryOp::Shl => bitwise_op!(lhs, rhs, <<, "<<=", span),
+            BinaryOp::Shr => bitwise_op!(lhs, rhs, >>, ">>=", span),
             BinaryOp::Pow => match (lhs, rhs) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
-                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation("**=".to_string())))
+                _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation("**=".to_string()), span.clone()))
             },
-            BinaryOp::Concat => self.concatenate_values(&lhs, &rhs),
-            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(format!("{:?}", op))))
+            BinaryOp::Concat => self.concatenate_values(&lhs, &rhs, span.clone()),
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::UnsupportedOperation(format!("{:?}", op)), span))
         }
     }
 
-    fn assign_indexed(&mut self, name: &str, indices: &[Expr], new_value: Value) -> Result<ControlFlow, RuntimeError> {
+    fn assign_indexed(&mut self, name: &str, indices: &[Expr], new_value: Value, span: Span) -> Result<ControlFlow, RuntimeError> {
         let first_index = self.evaluate_expression(&indices[0])?;
 
         if let Value::Range { start, stop, step } = first_index {
             let new_values = match new_value {
                 Value::Array(v) => v,
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("slice assignment requires array".to_string()))),
+                _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("slice assignment requires array".to_string()), span)),
             };
 
             let (normalized_start, normalized_stop, step_val) = {
-                let target = self.lookup(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
+                let target = self.lookup(name).ok_or(RuntimeError::with_span(RuntimeErrorKind::NullPointer, span.clone()))?;
                 if let Value::Array(arr) = target {
                     let len = arr.len();
-                    let start_idx = if let Some(s) = start { Self::normalize_index(s, len)? }
+                    let start_idx = if let Some(s) = start { Self::normalize_index(s, len, span.clone())? }
                     else { 0 };
-                    let stop_idx = if let Some(s) = stop { Self::normalize_index(s, len)? }
+                    let stop_idx = if let Some(s) = stop { Self::normalize_index(s, len, span.clone())? }
                     else { len - 1 };
                     (start_idx, stop_idx, step.unwrap_or(1) as usize)
                 } else {
-                    return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string())));
+                    return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string()), span.clone()));
                 }
             };
 
-            let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
+            let target = self.lookup_mut(name).ok_or(RuntimeError::with_span(RuntimeErrorKind::NullPointer, span.clone()))?;
             if let Value::Array(arr) = target {
                 for (i, val) in (normalized_start..=normalized_stop).step_by(step_val).zip(new_values) {
                     arr[i] = val;
                 }
                 return Ok(ControlFlow::None);
             }
-            return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string())));
+            return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string()), span));
         }
 
+        let index_span = indices[0].span.clone();
         let evaluated_indices: Vec<i64> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
             Ok(Value::Int(i)) => Ok(i),
-            Ok(_) => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("index must be int".to_string()))),
+            Ok(_) => Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("index must be int".to_string()), expr.span.clone())),
             Err(e) => Err(e),
         }).collect::<Result<Vec<i64>, RuntimeError>>()?;
 
         let is_bits = matches!(self.lookup(name), Some(Value::Bits { .. }));
 
         if is_bits {
-            let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
+            let target = self.lookup_mut(name).ok_or(RuntimeError::with_span(RuntimeErrorKind::NullPointer, span.clone()))?;
             if let Value::Bits { value, width } = target {
                 let bit_pos = if evaluated_indices[0] < 0 {
                     let pos = *width as i64 + evaluated_indices[0];
-                    if pos < 0 { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(evaluated_indices[0] as usize, *width))); }
+                    if pos < 0 { return Err(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(evaluated_indices[0] as usize, *width), index_span)); }
                     pos as usize
                 } else {
                     let idx = evaluated_indices[0] as usize;
-                    if idx >= *width { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx, *width))); }
+                    if idx >= *width { return Err(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(idx, *width), index_span)); }
                     idx
                 };
                 match new_value {
@@ -853,19 +856,19 @@ impl Interpreter {
                         if i != 0 { *value |= 1 << bit_pos; }
                         else { *value &= !(1 << bit_pos); }
                     }
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot assign to bit register".to_string()))),
+                    _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("cannot assign to bit register".to_string()), span)),
                 }
                 return Ok(ControlFlow::None);
             }
         }
 
-        let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
+        let target = self.lookup_mut(name).ok_or(RuntimeError::with_span(RuntimeErrorKind::NullPointer, span.clone()))?;
         match target {
             Value::Array(a) => {
-                Self::set_nested_with_i64_indices(a, &evaluated_indices, new_value)?;
+                Self::set_nested_with_i64_indices(a, &evaluated_indices, new_value, span)?;
                 Ok(ControlFlow::None)
             }
-            _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("only arrays and bit registers can be index assigned".to_string())))
+            _ => Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("only arrays and bit registers can be index assigned".to_string()), span))
         }
     }
 
@@ -886,16 +889,16 @@ impl Interpreter {
         Ok(ControlFlow::None)
     }
 
-    fn set_nested_with_i64_indices(arr: &mut Vec<Value>, indices: &[i64], value: Value) -> Result<ControlFlow, RuntimeError> {
+    fn set_nested_with_i64_indices(arr: &mut Vec<Value>, indices: &[i64], value: Value, span: Span) -> Result<ControlFlow, RuntimeError> {
         let len = arr.len();
-        let normalized_idx = Self::normalize_index(indices[0], len)?;
-        let elem = arr.get_mut(normalized_idx).ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len)))?;
+        let normalized_idx = Self::normalize_index(indices[0], len, span.clone())?;
+        let elem = arr.get_mut(normalized_idx).ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len), span.clone()))?;
 
         if indices.len() == 1 { *elem = value }
         else {
             match elem {
-                Value::Array(inner) => Self::set_nested_with_i64_indices(inner, &indices[1..], value)?,
-                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot index non-array".to_string()))),
+                Value::Array(inner) => Self::set_nested_with_i64_indices(inner, &indices[1..], value, span.clone())?,
+                _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("cannot index non-array".to_string()), span)),
             };
         }
 
@@ -988,7 +991,7 @@ impl Interpreter {
             let evaluated = self.evaluate_expression(cond)?;
 
             let coerced = coerce_to_bool(evaluated)
-                .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
+                .map_err(|e| RuntimeError::with_span(RuntimeErrorKind::TypeMismatch(e.to_string()), cond.span.clone()))?;
 
             match coerced {
                 Value::Bool(true) => {}
@@ -1041,25 +1044,26 @@ impl Interpreter {
 
                 let start_int = match start_value {
                     Value::Int(i) => i,
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range start must be int".to_string()))),
+                    _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("range start must be int".to_string()), stmt.span.clone())),
                 };
 
                 let stop_int = match stop {
                     Some(expr) => match self.evaluate_expression(expr)? {
                         Value::Int(i) => i,
-                        _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()))),
+                        _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()), expr.span.clone())),
                     },
-                    None => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()))),
+                    None => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()), stmt.span.clone())),
                 };
 
                 let step_value = match step {
-                    Some(step) => self.evaluate_expression(step)?,
+                    Some(step_expr) => self.evaluate_expression(step_expr)?,
                     None => Value::Int(1)
                 };
 
+                let step_span = step.as_ref().map(|e| e.span.clone()).unwrap_or_else(|| stmt.span.clone());
                 let step_int = match step_value {
                     Value::Int(i) => i,
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range step must be int".to_string()))),
+                    _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("range step must be int".to_string()), step_span)),
                 };
 
                 self.push_scope();
@@ -1070,11 +1074,11 @@ impl Interpreter {
                         Some(Value::Int(i)) => i,
                         Some(_) => {
                             self.pop_scope();
-                            return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range var must be int".to_string())));
+                            return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("range var must be int".to_string()), stmt.span.clone()));
                         }
                         None => {
                             self.pop_scope();
-                            return Err(RuntimeError::new(RuntimeErrorKind::NullPointer));
+                            return Err(RuntimeError::with_span(RuntimeErrorKind::NullPointer, stmt.span.clone()));
                         }
                     };
 
@@ -1124,10 +1128,10 @@ impl Interpreter {
         Ok(ControlFlow::None)
     }
 
-    fn call_function(&mut self, name: &str, args: &Vec<Expr>) -> Result<Value, RuntimeError> {
+    fn call_function(&mut self, name: &str, args: &Vec<Expr>, span: Span) -> Result<Value, RuntimeError> {
         let func = self.functions.get(name)
             .cloned()
-            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedFunction(name.to_string())))?;
+            .ok_or(RuntimeError::with_span(RuntimeErrorKind::UndefinedFunction(name.to_string()), span.clone()))?;
 
         let mut evaluated_args = vec![];
         for x in args {
@@ -1138,7 +1142,7 @@ impl Interpreter {
             Function::BuiltIn(f) => f.call(evaluated_args),
             Function::UserDefined { params, return_type: _, body } => {
                 if args.len() != params.len() {
-                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(params.len(), args.len())));
+                    return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidArgCount(params.len(), args.len()), span));
                 }
 
                 self.push_scope();
@@ -1146,7 +1150,7 @@ impl Interpreter {
 
                 if self.call_depth > 512 {
                     self.call_depth -= 1;
-                    return Err(RuntimeError::new(RuntimeErrorKind::RecursionLimit));
+                    return Err(RuntimeError::with_span(RuntimeErrorKind::RecursionLimit, span));
                 }
 
                 let mut qubit_params: Vec<(String, Option<Vec<usize>>)> = vec![];
@@ -1177,7 +1181,7 @@ impl Interpreter {
                     ControlFlow::Return(value) => Ok(value),
                     ControlFlow::None => Ok(Value::Void),
                     ControlFlow::Break | ControlFlow::Continue => {
-                        Err(RuntimeError::new(RuntimeErrorKind::InvalidControlFlow))
+                        Err(RuntimeError::with_span(RuntimeErrorKind::InvalidControlFlow, span))
                     }
                 }
             },
@@ -1186,9 +1190,9 @@ impl Interpreter {
                 Ok(Value::Void)
             }
             Function::Gate { .. } | Function::BuiltInGate { .. } => {
-                Err(RuntimeError::new(RuntimeErrorKind::InvalidCall(
+                Err(RuntimeError::with_span(RuntimeErrorKind::InvalidCall(
                     format!("'{}' is a gate and cannot be called as a classical function", name)
-                )))
+                ), span))
             }
         }
     }
@@ -1277,38 +1281,39 @@ impl Interpreter {
 
                 match evaluated_size {
                     Value::Int(size) => size as usize,
-                    _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize))
+                    _ => return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidSize, expr.span.clone()))
                 }
             },
             None => 1,
-            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)),
+            _ => return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidSize, stmt.span.clone())),
         };
 
         self.allocate_qubits(name, count);
         Ok(ControlFlow::None)
     }
 
-    fn resolve_qubits(&mut self, operand: &GateOperand) -> Result<Vec<usize>, RuntimeError> {
+    fn resolve_qubits(&mut self, operand: &GateOperand, span: Span) -> Result<Vec<usize>, RuntimeError> {
         match operand {
             GateOperand::Ident(ident) => {
                 let indices: Vec<usize> = self.qubit_map
                     .get(&ident.name)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UndefinedVariable(ident.name.clone())))?
+                    .ok_or_else(|| RuntimeError::with_span(RuntimeErrorKind::UndefinedVariable(ident.name.clone()), span.clone()))?
                     .clone();
 
                 if ident.indices.is_empty() {
                     Ok(indices.clone())
                 } else {
+                    let index_span = if !ident.indices.is_empty() { ident.indices[0].span.clone() } else { span.clone() };
                     let index = match &ident.indices[0].kind {
                         ExprKind::Int(i) => *i as usize,
                         _ => match self.evaluate_expression(&ident.indices[0])? {
                             Value::Int(i) => i as usize,
-                            _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index must be int".to_string()))),
+                            _ => return Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("qubit index must be int".to_string()), index_span.clone())),
                         },
                     };
                     let qubit = indices.get(index)
                         .copied()
-                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(index, indices.len())))?;
+                        .ok_or(RuntimeError::with_span(RuntimeErrorKind::IndexOutOfBounds(index, indices.len()), index_span))?;
 
                     Ok(vec![qubit])
                 }
@@ -1330,23 +1335,23 @@ impl Interpreter {
                 match self.evaluate_expression(p) {
                     Ok(Value::Float(f)) => Ok(f),
                     Ok(Value::Int(i)) => Ok(i as f64),
-                    Ok(_) => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("gate param must be numeric".to_string()))),
+                    Ok(_) => Err(RuntimeError::with_span(RuntimeErrorKind::TypeMismatch("gate param must be numeric".to_string()), p.span.clone())),
                     Err(e) => Err(e),
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         let qubit_groups: Vec<Vec<usize>> = qubits.iter()
-            .map(|q| self.resolve_qubits(q))
+            .map(|q| self.resolve_qubits(q, stmt.span.clone()))
             .collect::<Result<Vec<_>, _>>()?;
 
         let func = self.functions.get(name)
-            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedFunction(name.clone())))?
+            .ok_or(RuntimeError::with_span(RuntimeErrorKind::UndefinedFunction(name.clone()), stmt.span.clone()))?
             .clone();
 
         let expected_param_count = func.get_params().len();
         if param_values.len() != expected_param_count {
-            return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(expected_param_count, param_values.len())));
+            return Err(RuntimeError::with_span(RuntimeErrorKind::InvalidArgCount(expected_param_count, param_values.len()), stmt.span.clone()));
         }
 
         if name == "gphase" { return Ok(ControlFlow::None); }
@@ -1359,7 +1364,7 @@ impl Interpreter {
                     GateOperand::HardwareQubit(_) => {}
                 }
             }
-            self.call_function(name, &args)?;
+            self.call_function(name, &args, stmt.span.clone())?;
             return Ok(ControlFlow::None);
         }
 
@@ -1368,7 +1373,7 @@ impl Interpreter {
         let combinations = cartesian_product(&qubit_groups);
         for qubit_indices in combinations {
             let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
-            let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::with_span(RuntimeErrorKind::NoStateVector, stmt.span.clone()))?;
             modified.apply_to_statevector(sv, &qubit_indices);
         }
 
@@ -1518,21 +1523,21 @@ impl Interpreter {
             unreachable!();
         };
 
-        let qubit_indices = self.resolve_qubits(operand)?;
-        let value = self.measure_qubits(qubit_indices)?;
+        let qubit_indices = self.resolve_qubits(operand, stmt.span.clone())?;
+        let value = self.measure_qubits(qubit_indices, stmt.span.clone())?;
 
         if target.indices.is_empty() { self.assign(&target.name, value)?; }
-        else { self.assign_indexed(&target.name, &target.indices, value)?; }
+        else { self.assign_indexed(&target.name, &target.indices, value, stmt.span.clone())?; }
 
         Ok(ControlFlow::None)
     }
 
-    fn measure_qubits(&mut self, qubit_indices: Vec<usize>) -> Result<Value, RuntimeError> {
+    fn measure_qubits(&mut self, qubit_indices: Vec<usize>, span: Span) -> Result<Value, RuntimeError> {
         let mut result_value: u64 = 0;
         let width = qubit_indices.len();
 
         for (bit_pos, &qubit_idx) in qubit_indices.iter().enumerate() {
-            let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::with_span(RuntimeErrorKind::NoStateVector, span.clone()))?;
             let outcome = sv.measure_qubit(qubit_idx);
             if outcome {
                 result_value |= 1 << bit_pos;

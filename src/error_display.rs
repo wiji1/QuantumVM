@@ -34,7 +34,17 @@ impl ErrorReporter {
             }
         };
 
-        let mut report_builder = Report::build(ReportKind::Error, filename, 0);
+        // Extract span from error to get the offset for the report header
+        let header_offset = match error {
+            ParseError::UnexpectedToken { span, .. } => self.span_to_offset(&source, span),
+            ParseError::InvalidLiteral { span, .. } => self.span_to_offset(&source, span),
+            ParseError::InvalidVersion { span, .. } => self.span_to_offset(&source, span),
+            ParseError::InvalidStatement { span, .. } => self.span_to_offset(&source, span),
+            ParseError::TypeError { span, .. } => self.span_to_offset(&source, span),
+            ParseError::UnexpectedEof { .. } => 0,
+        };
+
+        let mut report_builder = Report::build(ReportKind::Error, filename, header_offset);
 
         match error {
             ParseError::UnexpectedToken { expected, found, span } => {
@@ -109,8 +119,9 @@ impl ErrorReporter {
         }
 
         let report = report_builder.finish();
-        let mut writer = io::stderr();
-        report.write((filename, Source::from(&**source)), &mut writer).unwrap();
+        let mut buf = Vec::new();
+        report.write((filename, Source::from(&**source)), &mut buf).unwrap();
+        eprint!("{}", String::from_utf8_lossy(&buf));
     }
 
     pub fn report_type_errors(&self, filename: &str, diagnostics: &[Diagnostic]) {
@@ -139,7 +150,11 @@ impl ErrorReporter {
                 DiagnosticSeverity::Hint => Color::Blue,
             };
 
-            let mut report_builder = Report::build(kind, filename, 0)
+            let header_offset = if let Some(span) = &diag.span {
+                self.span_to_offset(&source, span)
+            } else { 0 };
+
+            let mut report_builder = Report::build(kind, filename, header_offset)
                 .with_message(&diag.message);
 
             if let Some(span) = &diag.span {
@@ -165,7 +180,11 @@ impl ErrorReporter {
             }
         };
 
-        let mut report_builder = Report::build(ReportKind::Error, filename, 0)
+        let offset = if let Some(span) = &error.span {
+            self.span_to_offset(&source, span)
+        } else { 0 };
+
+        let mut report_builder = Report::build(ReportKind::Error, filename, offset)
             .with_message(format!("Runtime error: {}", error));
 
         if let Some(span) = &error.span {
@@ -178,8 +197,9 @@ impl ErrorReporter {
         }
 
         let report = report_builder.finish();
-        let mut writer = io::stderr();
-        report.write((filename, Source::from(&**source)), &mut writer).unwrap();
+        let mut buf = Vec::new();
+        report.write((filename, Source::from(&**source)), &mut buf).unwrap();
+        eprint!("{}", String::from_utf8_lossy(&buf));
     }
 
     fn span_to_offset(&self, source: &str, span: &Span) -> usize {
