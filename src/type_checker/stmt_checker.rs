@@ -770,11 +770,15 @@ fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &St
     lexer.start();
 
     let mut parser = Parser::new(lexer.tokens);
-    let program = parser.start(false).map_err(|e| {
-        StaticError::Other {
-            message: format!("Failed to parse include file {path}: {e:?}"),
-        }
-    })?;
+    let parse_result = parser.start(false);
+
+    if !parse_result.errors.is_empty() {
+        return Err(StaticError::Other {
+            message: format!("Failed to parse include file {path}: {} error(s)", parse_result.errors.len()),
+        });
+    }
+
+    let program = parse_result.program;
 
     for stmt in &program.statements {
         match &stmt.kind {

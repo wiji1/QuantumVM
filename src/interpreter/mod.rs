@@ -10,7 +10,7 @@ use crate::interpreter::function::{get_default_functions, Function};
 use crate::interpreter::quantum::gates::cartesian_product;
 use crate::interpreter::quantum::resolved_gate::ResolvedGate;
 use crate::interpreter::quantum::statevector::{StateVector, C64};
-use crate::interpreter::runtime_error::RuntimeError;
+use crate::interpreter::runtime_error::{RuntimeError, RuntimeErrorKind};
 use crate::interpreter::value::Value;
 use crate::lexer::Lexer;
 use crate::parser::expression::{Expr, ExprKind};
@@ -36,7 +36,7 @@ macro_rules! numeric_op {
             (Value::Complex(re, im), Value::Float(b)) => Ok(Value::Complex(re $op b, im)),
             (Value::Int(a), Value::Complex(re, im)) => Ok(Value::Complex(a as f64 $op re, im)),
             (Value::Complex(re, im), Value::Int(b)) => Ok(Value::Complex(re $op b as f64, im)),
-            _ => Err(RuntimeError::UnsupportedOperation($expr.to_string())),
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string()))),
         }
     };
 }
@@ -46,7 +46,7 @@ macro_rules! bitwise_op {
         match ($lhs, $rhs) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a $op b)),
             (Value::Bits { value: a, width: wa }, Value::Bits { value: b, width: wb }) => {
-                if wa != wb { return Err(RuntimeError::TypeMismatch($expr.to_string())); }
+                if wa != wb { return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch($expr.to_string()))); }
                 Ok(Value::Bits { value: a $op b, width: wa })
             },
             (Value::Bits { value: a, width: wa }, Value::Int(b)) => {
@@ -57,7 +57,7 @@ macro_rules! bitwise_op {
                 let mask = (1u64 << wb) - 1;
                 Ok(Value::Bits { value: ((a as u64) $op b) & mask, width: wb })
             },
-            _ => Err(RuntimeError::UnsupportedOperation($expr.to_string()))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string())))
         }
     };
 }
@@ -89,7 +89,7 @@ macro_rules! comparison_op {
                 let rhs_val: f64 = b as f64;
                 Ok(Value::Bool(a $op rhs_val))
             },
-            _ => Err(RuntimeError::UnsupportedOperation($expr.to_string()))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation($expr.to_string())))
         }
     };
 }
@@ -144,45 +144,38 @@ impl Interpreter {
     }
 
     fn normalize_index(idx: i64, len: usize) -> Result<usize, RuntimeError> {
-        if idx < 0 { return Err(RuntimeError::InvalidIndex); }
+        if idx < 0 { return Err(RuntimeError::new(RuntimeErrorKind::InvalidIndex)); }
         
         let idx_usize = idx as usize;
-        if idx_usize >= len { return Err(RuntimeError::IndexOutOfBounds(idx_usize, len)); }
+        if idx_usize >= len { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx_usize, len))); }
         Ok(idx_usize)
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Result<(), RuntimeError> {
         self.push_scope();
 
-        let defaults_result = self.define_default_operations();
-        match defaults_result {
-            Ok(_) => {},
-            Err(e) => panic!("Runtime error: {:?}", e)
-        };
+        self.define_default_operations()?;
 
         for stmt in self.program.statements.clone() {
-            match self.interpret_statement(&stmt) {
-                Ok(ControlFlow::Return(_)) => break,
-                Ok(_) => {}
-                Err(e) => { panic!("Runtime error: {:?}", e); }
+            match self.interpret_statement(&stmt)? {
+                ControlFlow::Return(_) => break,
+                _ => {}
             }
         }
 
         for output in self.outputs.clone().keys() {
-            let output_value = self.lookup(output);
-
-            match output_value {
-                Some(value) => self.outputs.insert(output.to_string(), value.clone()),
-                None => panic!("Output '{:?}' not found!", output)
-            };
+            if let Some(value) = self.lookup(output) {
+                self.outputs.insert(output.to_string(), value.clone());
+            }
         }
 
         self.pop_scope();
+        Ok(())
     }
 
     fn define(&mut self, name: String, value: Value, const_decl: bool) -> Result<ControlFlow, RuntimeError> {
         if self.scopes.last().unwrap().contains_key(&name) {
-            return Err(RuntimeError::DuplicateVariable(name));
+            return Err(RuntimeError::new(RuntimeErrorKind::DuplicateVariable(name)));
         }
 
         if const_decl { self.constants.insert(name.to_string()); }
@@ -192,7 +185,7 @@ impl Interpreter {
 
     fn assign(&mut self, name: &str, value: Value) -> Result<ControlFlow, RuntimeError> {
         if self.constants.contains(name) {
-            return Err(RuntimeError::ConstReassignment(name.to_string()));
+            return Err(RuntimeError::new(RuntimeErrorKind::ConstReassignment(name.to_string())));
         }
 
         for scope in self.scopes.iter_mut().rev() {
@@ -200,13 +193,13 @@ impl Interpreter {
                 let target_type = infer_type_from_value(current_value);
 
                 let coerced_value = coerce_value(value, &target_type)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
                 scope.insert(name.to_string(), coerced_value);
                 return Ok(ControlFlow::None);
             }
         }
-        Err(RuntimeError::UndefinedVariable(name.to_string()))
+        Err(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(name.to_string())))
     }
 
     fn define_default_operations(&mut self) -> Result<(), RuntimeError> {
@@ -268,7 +261,7 @@ impl Interpreter {
             StmtKind::Break => Ok(ControlFlow::Break),
             StmtKind::Reset { qubit } => {
                 let qubit_indices = self.resolve_qubits(qubit)?;
-                let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+                let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
                 for qubit_index in qubit_indices { sv.reset_qubit(qubit_index); }
                 Ok(ControlFlow::None)
             }
@@ -285,7 +278,7 @@ impl Interpreter {
             },
             StmtKind::GateDef { name, params, qubits, body } => {
                 if self.functions.contains_key(name) {
-                    return Err(RuntimeError::DuplicateGate(name.to_string()));
+                    return Err(RuntimeError::new(RuntimeErrorKind::DuplicateGate(name.to_string())));
                 }
                 self.functions.insert(name.to_string(), Function::Gate {
                     params: params.clone(),
@@ -303,7 +296,7 @@ impl Interpreter {
             },
             StmtKind::Def { name, params, return_type, body } => {
                 if self.functions.contains_key(name) {
-                    return Err(RuntimeError::DuplicateFunction(name.to_string()));
+                    return Err(RuntimeError::new(RuntimeErrorKind::DuplicateFunction(name.to_string())));
                 }
                 self.functions.insert(name.clone(), Function::UserDefined {
                     params: params.clone(),
@@ -352,7 +345,7 @@ impl Interpreter {
 
         let target_type = Type::from_classical_type(ty);
         let coerced_value = coerce_value(init_value, &target_type)
-            .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+            .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
         self.define(name.to_string(), coerced_value, false)?;
 
@@ -370,11 +363,11 @@ impl Interpreter {
             let evaluated = self.evaluate_expression(size_expr)?;
             match evaluated {
                 Value::Int(i) => dimensions.push(i),
-                _ => return Err(RuntimeError::InvalidSize),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)),
             }
         }
 
-        if dimensions.is_empty() || dimensions.len() > 7 { return Err(RuntimeError::InvalidSize); }
+        if dimensions.is_empty() || dimensions.len() > 7 { return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)); }
 
         let value = match init {
             Some(expr) => self.evaluate_expression(expr)?,
@@ -420,7 +413,7 @@ impl Interpreter {
                 if let Some(val) = self.lookup(name) { Ok(val.clone()) }
                 else if let Some(indices) = self.qubit_map.get(name) {
                     Ok(Value::Qubit(indices.clone()))
-                } else { Err(RuntimeError::UndefinedVariable(name.clone())) }
+                } else { Err(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(name.clone()))) }
             }
             ExprKind::IndexedIdent(i) => { self.evaluate_indexed_ident(i) }
             ExprKind::Measure(op) => { self.evaluate_measure(op) }
@@ -431,7 +424,7 @@ impl Interpreter {
                 let value = self.evaluate_expression(inner_expr)?;
                 let target_type = Type::from_classical_type(ty);
                 cast_value(value, &target_type)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))
             }
             ExprKind::Range { .. } => { self.evaluate_range(expr) }
         }
@@ -452,7 +445,7 @@ impl Interpreter {
         }
 
         let mut value = self.lookup(&ident.name).cloned()
-            .ok_or(RuntimeError::UndefinedVariable(ident.name.clone()))?;
+            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(ident.name.clone())))?;
 
         for expr in &ident.indices {
             let index_val = self.evaluate_expression(expr)?;
@@ -461,7 +454,7 @@ impl Interpreter {
                     let len = arr.len();
                     let normalized_idx = Self::normalize_index(i, len)?;
                     arr.into_iter().nth(normalized_idx)
-                        .ok_or(RuntimeError::IndexOutOfBounds(normalized_idx, len))?
+                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len)))?
                 }
                 (Value::Array(arr), Value::Range { start, stop, step }) => {
                     let len = arr.len();
@@ -475,16 +468,16 @@ impl Interpreter {
                 (Value::Bits { value, width }, Value::Int(i)) => {
                     let normalized_idx = if i < 0 {
                         let pos = width as i64 + i;
-                        if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(i as usize, width)); }
+                        if pos < 0 { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, width))); }
                         pos as usize
                     } else {
                         let idx = i as usize;
-                        if idx >= width { return Err(RuntimeError::IndexOutOfBounds(idx, width)); }
+                        if idx >= width { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx, width))); }
                         idx
                     };
                     Value::Bits { value: (value >> normalized_idx) & 1, width: 1 }
                 }
-                _ => return Err(RuntimeError::TypeMismatch("cannot index with this type".to_string())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot index with this type".to_string()))),
             };
         }
         Ok(value)
@@ -499,15 +492,15 @@ impl Interpreter {
             Value::Int(i) => {
                 let qubit = indices.get(i as usize)
                     .copied()
-                    .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len()))?;
+                    .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len())))?;
                 vec![qubit]
             }
             Value::Array(arr) => {
                 arr.into_iter().map(|val| match val {
                     Value::Int(i) => indices.get(i as usize)
                         .copied()
-                        .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len())),
-                    _ => Err(RuntimeError::TypeMismatch("qubit set index must be int".to_string())),
+                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len()))),
+                    _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit set index must be int".to_string()))),
                 }).collect::<Result<Vec<_>, _>>()?
             }
             Value::Range { start, stop, step } => {
@@ -515,20 +508,20 @@ impl Interpreter {
                 let stop = stop.unwrap_or(indices.len() as i64) as usize;
                 let step = step.unwrap_or(1) as usize;
                 (start..=stop).step_by(step)
-                    .map(|i| indices.get(i).copied().ok_or(RuntimeError::IndexOutOfBounds(i, indices.len())))
+                    .map(|i| indices.get(i).copied().ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i, indices.len()))))
                     .collect::<Result<Vec<_>, _>>()?
             }
             other => {
                 let coerced = coerce_value(other, &Type::Int(None))
-                    .map_err(|_| RuntimeError::TypeMismatch("qubit index must be int, range, or set".to_string()))?;
+                    .map_err(|_| RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index must be int, range, or set".to_string())))?;
                 match coerced {
                     Value::Int(i) => {
                         let qubit = indices.get(i as usize)
                             .copied()
-                            .ok_or(RuntimeError::IndexOutOfBounds(i as usize, indices.len()))?;
+                            .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(i as usize, indices.len())))?;
                         vec![qubit]
                     }
-                    _ => return Err(RuntimeError::TypeMismatch("qubit index coercion did not produce int".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index coercion did not produce int".to_string()))),
                 }
             }
         };
@@ -550,7 +543,7 @@ impl Interpreter {
                 match evaluated {
                     Value::Int(i) => { Ok(Value::Int(-i)) }
                     Value::Float(f) => { Ok(Value::Float(-f)) }
-                    _ => { Err(RuntimeError::UnsupportedOperation(expr.to_string())) }
+                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
                 }
             }
             UnaryOp::BitNot => {
@@ -560,13 +553,13 @@ impl Interpreter {
                         let mask = (1u64 << width) - 1;
                         Ok(Value::Bits { value: !value & mask, width })
                     }
-                    _ => { Err(RuntimeError::UnsupportedOperation(expr.to_string())) }
+                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
                 }
             }
             UnaryOp::LogicNot => {
                 match evaluated {
                     Value::Bool(b) => { Ok(Value::Bool(!b)) },
-                    _ => { Err(RuntimeError::UnsupportedOperation(expr.to_string())) }
+                    _ => { Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string()))) }
                 }
             }
         }
@@ -586,7 +579,7 @@ impl Interpreter {
                 Value::Float(f) => *f == 0.0,
                 _ => false,
             };
-            if is_zero { return Err(RuntimeError::DivideByZero); }
+            if is_zero { return Err(RuntimeError::new(RuntimeErrorKind::DivideByZero)); }
         }
 
         match op {
@@ -598,7 +591,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
-                _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
+                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string())))
             },
             BinaryOp::Mod => numeric_op!(lhs_evaluated, rhs_evaluated, %, expr),
             BinaryOp::Pow => match (lhs_evaluated, rhs_evaluated) {
@@ -606,7 +599,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
-                _ => Err(RuntimeError::UnsupportedOperation(expr.to_string()))
+                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(expr.to_string())))
             },
             BinaryOp::And => bitwise_op!(lhs_evaluated, rhs_evaluated, &, expr),
             BinaryOp::Or  => bitwise_op!(lhs_evaluated, rhs_evaluated, |, expr),
@@ -615,9 +608,9 @@ impl Interpreter {
             BinaryOp::Shr => bitwise_op!(lhs_evaluated, rhs_evaluated, >>, expr),
             BinaryOp::LogicAnd => {
                 let lhs_bool = coerce_to_bool(lhs_evaluated)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                 let rhs_bool = coerce_to_bool(rhs_evaluated)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
                 match (lhs_bool, rhs_bool) {
                     (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
@@ -626,9 +619,9 @@ impl Interpreter {
             },
             BinaryOp::LogicOr => {
                 let lhs_bool = coerce_to_bool(lhs_evaluated)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                 let rhs_bool = coerce_to_bool(rhs_evaluated)
-                    .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                    .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
                 match (lhs_bool, rhs_bool) {
                     (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
@@ -663,7 +656,7 @@ impl Interpreter {
                 let current = if target.indices.is_empty() {
                     self.lookup(&target.name)
                         .cloned()
-                        .ok_or(RuntimeError::UndefinedVariable(target.name.clone()))?
+                        .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(target.name.clone())))?
                 } else {
                     self.evaluate_indexed_ident(&IndexedIdent {
                         name: target.name.clone(),
@@ -688,9 +681,9 @@ impl Interpreter {
                 let set_b: HashSet<_> = indices_b.iter().collect();
 
                 if set_a.intersection(&set_b).count() > 0 {
-                    return Err(RuntimeError::SelfConcatenation(
+                    return Err(RuntimeError::new(RuntimeErrorKind::SelfConcatenation(
                         "Cannot concatenate a qubit register with itself".to_string()
-                    ));
+                    )));
                 }
 
                 let mut result = indices_a.clone();
@@ -701,9 +694,9 @@ impl Interpreter {
             (Value::Bits { value: v1, width: w1 }, Value::Bits { value: v2, width: w2 }) => {
                 let new_width = w1 + w2;
                 if new_width > 64 {
-                    return Err(RuntimeError::UnsupportedOperation(
+                    return Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(
                         format!("Bit concatenation exceeds 64-bit limit: {} + {}", w1, w2)
-                    ));
+                    )));
                 }
 
                 let new_value = (v2 << w1) | v1;
@@ -716,9 +709,9 @@ impl Interpreter {
                 Ok(Value::Array(result))
             }
 
-            _ => Err(RuntimeError::UnsupportedOperation(
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(
                 format!("Cannot concatenate {:?} and {:?}", lhs, rhs)
-            ))
+            )))
         }
     }
 
@@ -729,7 +722,7 @@ impl Interpreter {
                 Value::Float(f) => *f == 0.0,
                 _ => false,
             };
-            if is_zero { return Err(RuntimeError::DivideByZero); }
+            if is_zero { return Err(RuntimeError::new(RuntimeErrorKind::DivideByZero)); }
         }
 
         match op {
@@ -741,15 +734,15 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
-                _ => Err(RuntimeError::UnsupportedOperation("/".to_string()))
+                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation("/".to_string())))
             },
             BinaryOp::Mod => numeric_op!(lhs, rhs, %, "%="),
             BinaryOp::And => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a & b)),
                         _ => unreachable!(),
@@ -759,9 +752,9 @@ impl Interpreter {
             BinaryOp::Or => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a | b)),
                         _ => unreachable!(),
@@ -771,9 +764,9 @@ impl Interpreter {
             BinaryOp::Xor => {
                 if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
                     let lhs_bool = coerce_to_bool(lhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     let rhs_bool = coerce_to_bool(rhs)
-                        .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                        .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
                     match (lhs_bool, rhs_bool) {
                         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a ^ b)),
                         _ => unreachable!(),
@@ -787,10 +780,10 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
-                _ => Err(RuntimeError::UnsupportedOperation("**=".to_string()))
+                _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation("**=".to_string())))
             },
             BinaryOp::Concat => self.concatenate_values(&lhs, &rhs),
-            _ => Err(RuntimeError::UnsupportedOperation(format!("{:?}", op)))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation(format!("{:?}", op))))
         }
     }
 
@@ -800,11 +793,11 @@ impl Interpreter {
         if let Value::Range { start, stop, step } = first_index {
             let new_values = match new_value {
                 Value::Array(v) => v,
-                _ => return Err(RuntimeError::TypeMismatch("slice assignment requires array".to_string())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("slice assignment requires array".to_string()))),
             };
 
             let (normalized_start, normalized_stop, step_val) = {
-                let target = self.lookup(name).ok_or(RuntimeError::NullPointer)?;
+                let target = self.lookup(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
                 if let Value::Array(arr) = target {
                     let len = arr.len();
                     let start_idx = if let Some(s) = start { Self::normalize_index(s, len)? }
@@ -813,38 +806,38 @@ impl Interpreter {
                     else { len - 1 };
                     (start_idx, stop_idx, step.unwrap_or(1) as usize)
                 } else {
-                    return Err(RuntimeError::TypeMismatch("cannot slice non-array".to_string()));
+                    return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string())));
                 }
             };
 
-            let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+            let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
             if let Value::Array(arr) = target {
                 for (i, val) in (normalized_start..=normalized_stop).step_by(step_val).zip(new_values) {
                     arr[i] = val;
                 }
                 return Ok(ControlFlow::None);
             }
-            return Err(RuntimeError::TypeMismatch("cannot slice non-array".to_string()));
+            return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot slice non-array".to_string())));
         }
 
         let evaluated_indices: Vec<i64> = indices.iter().map(|expr| match self.evaluate_expression(expr) {
             Ok(Value::Int(i)) => Ok(i),
-            Ok(_) => Err(RuntimeError::TypeMismatch("index must be int".to_string())),
+            Ok(_) => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("index must be int".to_string()))),
             Err(e) => Err(e),
         }).collect::<Result<Vec<i64>, RuntimeError>>()?;
 
         let is_bits = matches!(self.lookup(name), Some(Value::Bits { .. }));
 
         if is_bits {
-            let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+            let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
             if let Value::Bits { value, width } = target {
                 let bit_pos = if evaluated_indices[0] < 0 {
                     let pos = *width as i64 + evaluated_indices[0];
-                    if pos < 0 { return Err(RuntimeError::IndexOutOfBounds(evaluated_indices[0] as usize, *width)); }
+                    if pos < 0 { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(evaluated_indices[0] as usize, *width))); }
                     pos as usize
                 } else {
                     let idx = evaluated_indices[0] as usize;
-                    if idx >= *width { return Err(RuntimeError::IndexOutOfBounds(idx, *width)); }
+                    if idx >= *width { return Err(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(idx, *width))); }
                     idx
                 };
                 match new_value {
@@ -860,19 +853,19 @@ impl Interpreter {
                         if i != 0 { *value |= 1 << bit_pos; }
                         else { *value &= !(1 << bit_pos); }
                     }
-                    _ => return Err(RuntimeError::TypeMismatch("cannot assign to bit register".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot assign to bit register".to_string()))),
                 }
                 return Ok(ControlFlow::None);
             }
         }
 
-        let target = self.lookup_mut(name).ok_or(RuntimeError::NullPointer)?;
+        let target = self.lookup_mut(name).ok_or(RuntimeError::new(RuntimeErrorKind::NullPointer))?;
         match target {
             Value::Array(a) => {
                 Self::set_nested_with_i64_indices(a, &evaluated_indices, new_value)?;
                 Ok(ControlFlow::None)
             }
-            _ => Err(RuntimeError::TypeMismatch("only arrays and bit registers can be index assigned".to_string()))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("only arrays and bit registers can be index assigned".to_string())))
         }
     }
 
@@ -880,13 +873,13 @@ impl Interpreter {
         let index = indices[0];
 
         let len = arr.len();
-        let elem = arr.get_mut(index).ok_or(RuntimeError::IndexOutOfBounds(index, len))?;
+        let elem = arr.get_mut(index).ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(index, len)))?;
 
         if indices.len() == 1 { *elem = value }
         else {
             match elem {
                 Value::Array(inner) => Self::set_nested_evaluated(inner, &indices[1..], value)?,
-                _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot index non-array".to_string()))),
             };
         }
 
@@ -896,13 +889,13 @@ impl Interpreter {
     fn set_nested_with_i64_indices(arr: &mut Vec<Value>, indices: &[i64], value: Value) -> Result<ControlFlow, RuntimeError> {
         let len = arr.len();
         let normalized_idx = Self::normalize_index(indices[0], len)?;
-        let elem = arr.get_mut(normalized_idx).ok_or(RuntimeError::IndexOutOfBounds(normalized_idx, len))?;
+        let elem = arr.get_mut(normalized_idx).ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(normalized_idx, len)))?;
 
         if indices.len() == 1 { *elem = value }
         else {
             match elem {
                 Value::Array(inner) => Self::set_nested_with_i64_indices(inner, &indices[1..], value)?,
-                _ => return Err(RuntimeError::TypeMismatch("cannot index non-array".to_string())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("cannot index non-array".to_string()))),
             };
         }
 
@@ -917,7 +910,7 @@ impl Interpreter {
         let evaluated = self.evaluate_expression(cond)?;
 
         let coerced = coerce_to_bool(evaluated)
-            .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+            .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
         let Value::Bool(bool) = coerced else {
             unreachable!("coerce_to_bool should always return a Bool value!");
@@ -995,7 +988,7 @@ impl Interpreter {
             let evaluated = self.evaluate_expression(cond)?;
 
             let coerced = coerce_to_bool(evaluated)
-                .map_err(|e| RuntimeError::TypeMismatch(e.to_string()))?;
+                .map_err(|e| RuntimeError::new(RuntimeErrorKind::TypeMismatch(e.to_string())))?;
 
             match coerced {
                 Value::Bool(true) => {}
@@ -1048,15 +1041,15 @@ impl Interpreter {
 
                 let start_int = match start_value {
                     Value::Int(i) => i,
-                    _ => return Err(RuntimeError::TypeMismatch("range start must be int".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range start must be int".to_string()))),
                 };
 
                 let stop_int = match stop {
                     Some(expr) => match self.evaluate_expression(expr)? {
                         Value::Int(i) => i,
-                        _ => return Err(RuntimeError::TypeMismatch("range stop must be int".to_string())),
+                        _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()))),
                     },
-                    None => return Err(RuntimeError::TypeMismatch("range stop must be int".to_string())),
+                    None => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range stop must be int".to_string()))),
                 };
 
                 let step_value = match step {
@@ -1066,7 +1059,7 @@ impl Interpreter {
 
                 let step_int = match step_value {
                     Value::Int(i) => i,
-                    _ => return Err(RuntimeError::TypeMismatch("range step must be int".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range step must be int".to_string()))),
                 };
 
                 self.push_scope();
@@ -1077,11 +1070,11 @@ impl Interpreter {
                         Some(Value::Int(i)) => i,
                         Some(_) => {
                             self.pop_scope();
-                            return Err(RuntimeError::TypeMismatch("range var must be int".to_string()));
+                            return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range var must be int".to_string())));
                         }
                         None => {
                             self.pop_scope();
-                            return Err(RuntimeError::NullPointer);
+                            return Err(RuntimeError::new(RuntimeErrorKind::NullPointer));
                         }
                     };
 
@@ -1110,7 +1103,7 @@ impl Interpreter {
 
                 let values = match evaluated {
                     Value::Array(v) => v,
-                    _ => return Err(RuntimeError::TypeMismatch("for iter must be an array".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("for iter must be an array".to_string()))),
                 };
 
                 for value in values.iter() {
@@ -1134,7 +1127,7 @@ impl Interpreter {
     fn call_function(&mut self, name: &str, args: &Vec<Expr>) -> Result<Value, RuntimeError> {
         let func = self.functions.get(name)
             .cloned()
-            .ok_or(RuntimeError::UndefinedFunction(name.to_string()))?;
+            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedFunction(name.to_string())))?;
 
         let mut evaluated_args = vec![];
         for x in args {
@@ -1145,7 +1138,7 @@ impl Interpreter {
             Function::BuiltIn(f) => f.call(evaluated_args),
             Function::UserDefined { params, return_type: _, body } => {
                 if args.len() != params.len() {
-                    return Err(RuntimeError::InvalidArgCount(params.len(), args.len()));
+                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(params.len(), args.len())));
                 }
 
                 self.push_scope();
@@ -1153,7 +1146,7 @@ impl Interpreter {
 
                 if self.call_depth > 512 {
                     self.call_depth -= 1;
-                    return Err(RuntimeError::RecursionLimit);
+                    return Err(RuntimeError::new(RuntimeErrorKind::RecursionLimit));
                 }
 
                 let mut qubit_params: Vec<(String, Option<Vec<usize>>)> = vec![];
@@ -1184,7 +1177,7 @@ impl Interpreter {
                     ControlFlow::Return(value) => Ok(value),
                     ControlFlow::None => Ok(Value::Void),
                     ControlFlow::Break | ControlFlow::Continue => {
-                        Err(RuntimeError::InvalidControlFlow)
+                        Err(RuntimeError::new(RuntimeErrorKind::InvalidControlFlow))
                     }
                 }
             },
@@ -1193,9 +1186,9 @@ impl Interpreter {
                 Ok(Value::Void)
             }
             Function::Gate { .. } | Function::BuiltInGate { .. } => {
-                Err(RuntimeError::InvalidCall(
+                Err(RuntimeError::new(RuntimeErrorKind::InvalidCall(
                     format!("'{}' is a gate and cannot be called as a classical function", name)
-                ))
+                )))
             }
         }
     }
@@ -1214,7 +1207,7 @@ impl Interpreter {
                         self.define(name.to_string(), value.clone(), false)?;
                         Ok(ControlFlow::None)
                     },
-                    None => Err(RuntimeError::UndefinedVariable(name.to_string())),
+                    None => Err(RuntimeError::new(RuntimeErrorKind::UndefinedVariable(name.to_string()))),
                 }
             }
             IoDirection::Output => {
@@ -1231,7 +1224,7 @@ impl Interpreter {
 
         let full_path = self.script_dir.join(path);
         let source = std::fs::read_to_string(&full_path)
-            .map_err(|_| RuntimeError::FileNotFound(path.clone()))?;
+            .map_err(|_| RuntimeError::new(RuntimeErrorKind::FileNotFound(path.clone())))?;
 
         self.interpret_include_from_src(&source)
     }
@@ -1241,10 +1234,13 @@ impl Interpreter {
         lexer.start();
 
         let mut parser = Parser::new(lexer.tokens);
-        let program = parser.start(false)
-            .map_err(|e| RuntimeError::ParseError(e))?;
+        let parse_result = parser.start(false);
 
-        self.interpret_statements(&program.statements)
+        if !parse_result.errors.is_empty() {
+            return Err(RuntimeError::new(RuntimeErrorKind::ParseError(parse_result.errors[0].clone())));
+        }
+
+        self.interpret_statements(&parse_result.program.statements)
     }
 
 
@@ -1281,11 +1277,11 @@ impl Interpreter {
 
                 match evaluated_size {
                     Value::Int(size) => size as usize,
-                    _ => return Err(RuntimeError::InvalidSize)
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize))
                 }
             },
             None => 1,
-            _ => return Err(RuntimeError::InvalidSize),
+            _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)),
         };
 
         self.allocate_qubits(name, count);
@@ -1297,7 +1293,7 @@ impl Interpreter {
             GateOperand::Ident(ident) => {
                 let indices: Vec<usize> = self.qubit_map
                     .get(&ident.name)
-                    .ok_or_else(|| RuntimeError::UndefinedVariable(ident.name.clone()))?
+                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UndefinedVariable(ident.name.clone())))?
                     .clone();
 
                 if ident.indices.is_empty() {
@@ -1307,12 +1303,12 @@ impl Interpreter {
                         ExprKind::Int(i) => *i as usize,
                         _ => match self.evaluate_expression(&ident.indices[0])? {
                             Value::Int(i) => i as usize,
-                            _ => return Err(RuntimeError::TypeMismatch("qubit index must be int".to_string(), )),
+                            _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("qubit index must be int".to_string()))),
                         },
                     };
                     let qubit = indices.get(index)
                         .copied()
-                        .ok_or(RuntimeError::IndexOutOfBounds(index, indices.len()))?;
+                        .ok_or(RuntimeError::new(RuntimeErrorKind::IndexOutOfBounds(index, indices.len())))?;
 
                     Ok(vec![qubit])
                 }
@@ -1334,7 +1330,7 @@ impl Interpreter {
                 match self.evaluate_expression(p) {
                     Ok(Value::Float(f)) => Ok(f),
                     Ok(Value::Int(i)) => Ok(i as f64),
-                    Ok(_) => Err(RuntimeError::TypeMismatch("gate param must be numeric".to_string())),
+                    Ok(_) => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("gate param must be numeric".to_string()))),
                     Err(e) => Err(e),
                 }
             })
@@ -1345,12 +1341,12 @@ impl Interpreter {
             .collect::<Result<Vec<_>, _>>()?;
 
         let func = self.functions.get(name)
-            .ok_or(RuntimeError::UndefinedFunction(name.clone()))?
+            .ok_or(RuntimeError::new(RuntimeErrorKind::UndefinedFunction(name.clone())))?
             .clone();
 
         let expected_param_count = func.get_params().len();
         if param_values.len() != expected_param_count {
-            return Err(RuntimeError::InvalidArgCount(expected_param_count, param_values.len()));
+            return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(expected_param_count, param_values.len())));
         }
 
         if name == "gphase" { return Ok(ControlFlow::None); }
@@ -1372,7 +1368,7 @@ impl Interpreter {
         let combinations = cartesian_product(&qubit_groups);
         for qubit_indices in combinations {
             let modified = self.apply_modifiers_to_gate(resolved, modifiers)?;
-            let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
             modified.apply_to_statevector(sv, &qubit_indices);
         }
 
@@ -1394,7 +1390,7 @@ impl Interpreter {
                 self.gate_cache.insert(cache_key, resolved);
                 Ok(resolved)
             }
-            _ => Err(RuntimeError::UndefinedFunction("not a gate".to_string()))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UndefinedFunction("not a gate".to_string())))
         }
     }
 
@@ -1468,7 +1464,7 @@ impl Interpreter {
                 }
                 Ok(ResolvedGate::ThreeQubit(m))
             }
-            _ => Err(RuntimeError::UnsupportedOperation("gates with >3 qubits not supported".to_string()))
+            _ => Err(RuntimeError::new(RuntimeErrorKind::UnsupportedOperation("gates with >3 qubits not supported".to_string())))
         }
     }
 
@@ -1480,7 +1476,7 @@ impl Interpreter {
                     let n = match self.evaluate_expression(expr)? {
                         Value::Int(i) => i,
                         Value::Float(f) => f as i64,
-                        _ => return Err(RuntimeError::TypeMismatch("pow requires numeric".to_string())),
+                        _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("pow requires numeric".to_string()))),
                     };
                     gate.apply_pow(n)
                 }
@@ -1489,7 +1485,7 @@ impl Interpreter {
                         Some(expr) => match self.evaluate_expression(expr)? {
                             Value::Int(i) => i as usize,
                             Value::Float(f) => f as usize,
-                            _ => return Err(RuntimeError::TypeMismatch("ctrl count must be int".to_string())),
+                            _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("ctrl count must be int".to_string()))),
                         },
                         None => 1,
                     };
@@ -1501,7 +1497,7 @@ impl Interpreter {
                         Some(expr) => match self.evaluate_expression(expr)? {
                             Value::Int(i) => i as usize,
                             Value::Float(f) => f as usize,
-                            _ => return Err(RuntimeError::TypeMismatch("negctrl count must be int".to_string())),
+                            _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("negctrl count must be int".to_string()))),
                         },
                         None => 1,
                     };
@@ -1536,7 +1532,7 @@ impl Interpreter {
         let width = qubit_indices.len();
 
         for (bit_pos, &qubit_idx) in qubit_indices.iter().enumerate() {
-            let sv = self.state_vector.as_mut().ok_or(RuntimeError::NoStateVector)?;
+            let sv = self.state_vector.as_mut().ok_or(RuntimeError::new(RuntimeErrorKind::NoStateVector))?;
             let outcome = sv.measure_qubit(qubit_idx);
             if outcome {
                 result_value |= 1 << bit_pos;
@@ -1550,7 +1546,7 @@ impl Interpreter {
         match e {
             Some(e) => match self.evaluate_expression(e)? {
                 Value::Int(i) => Ok(Some(i)),
-                _ => Err(RuntimeError::TypeMismatch("range bound must be int".to_string())),
+                _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("range bound must be int".to_string()))),
             },
             None => Ok(None),
         }

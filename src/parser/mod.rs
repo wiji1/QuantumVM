@@ -91,6 +91,8 @@ macro_rules! extract_token {
 pub struct Parser {
     tokens: Vec<Token>,
     cursor: usize,
+    errors: Vec<ParseError>,
+    panic_mode: bool,
 }
 
 pub struct Program {
@@ -98,26 +100,56 @@ pub struct Program {
     pub statements: Vec<Stmt>,
 }
 
+pub struct ParseResult {
+    pub program: Program,
+    pub errors: Vec<ParseError>,
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, cursor: 0 }
+        Parser {
+            tokens,
+            cursor: 0,
+            errors: Vec::new(),
+            panic_mode: false,
+        }
     }
 
-    //TODO: Allow this to support multiple parse errors
-    pub fn start(&mut self, include_lib: bool) -> Result<Program, ParseError> {
-        let version = self.parse_version()?;
+    pub fn start(&mut self, include_lib: bool) -> ParseResult {
+        let version = match self.parse_version() {
+            Ok(v) => v,
+            Err(e) => {
+                self.record_error(e);
+                self.synchronize();
+                None
+            }
+        };
+
         if let Some(version) = version {
-            if version < 3.0 { return Err(ParseError::InvalidVersion {
-                found: version.to_string(),
-                span: self.peek().span.clone(),
-            }); }
+            if version < 3.0 {
+                self.record_error(ParseError::InvalidVersion {
+                    found: version.to_string(),
+                    span: self.peek().span.clone(),
+                });
+                self.synchronize();
+            }
         }
 
         let mut statements = vec![];
         while !self.is_at_end() {
             self.skip_trivia();
             if self.is_at_end() { break; }
-            statements.push(self.parse_statement()?);
+
+            match self.parse_statement() {
+                Ok(stmt) => {
+                    statements.push(stmt);
+                    self.panic_mode = false;
+                }
+                Err(e) => {
+                    self.record_error(e);
+                    self.synchronize();
+                }
+            }
         }
 
         if include_lib {
@@ -127,7 +159,48 @@ impl Parser {
             statements.insert(0, Stmt::new(StmtKind::IncludeFromSrc(lib_name.to_string(), stdgates_source.to_string()), synthetic_span));
         }
 
-        Ok(Program { version, statements })
+        ParseResult {
+            program: Program { version, statements },
+            errors: self.errors.clone(),
+        }
+    }
+
+    fn record_error(&mut self, error: ParseError) {
+        if !self.panic_mode {
+            self.errors.push(error);
+            self.panic_mode = true;
+        }
+    }
+
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+
+        while !self.is_at_end() {
+            match self.peek().kind {
+                TokenType::Symbol(Symbol::Semicolon) => {
+                    self.advance();
+                    return;
+                }
+                TokenType::Symbol(Symbol::NewLine) => {
+                    self.advance();
+                    match self.peek().kind {
+                        TokenType::TypeDef(_)
+                        | TokenType::Keyword(Keyword::Const)
+                        | TokenType::Keyword(Keyword::Gate)
+                        | TokenType::Keyword(Keyword::If)
+                        | TokenType::Keyword(Keyword::While)
+                        | TokenType::Keyword(Keyword::For)
+                        | TokenType::Keyword(Keyword::Def)
+                        | TokenType::Keyword(Keyword::Include)
+                        | TokenType::Keyword(Keyword::Let) => return,
+                        _ => {}
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     fn peek(&self) -> &Token { &self.tokens[self.cursor.min(self.tokens.len() - 1)] }

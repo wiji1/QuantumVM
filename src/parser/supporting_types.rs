@@ -1,4 +1,4 @@
-use crate::interpreter::runtime_error::RuntimeError;
+use crate::interpreter::runtime_error::{RuntimeError, RuntimeErrorKind};
 use crate::interpreter::value::Value;
 use crate::parser::expression::{Expr, ExprKind};
 use crate::parser::statement::Stmt;
@@ -108,7 +108,7 @@ impl ClassicalType {
                 let width = match size {
                     Some(ref expr) => match &expr.kind {
                         ExprKind::Int(n) => *n as usize,
-                        _ => return Err(RuntimeError::InvalidSize),
+                        _ => return Err(RuntimeError::new(RuntimeErrorKind::InvalidSize)),
                     },
                     None => 1,
                 };
@@ -123,7 +123,7 @@ impl ClassicalType {
             ClassicalType::Complex(_) => Ok(Value::Complex(0.0, 0.0)),
             ClassicalType::Duration(_) => Ok(Value::Timing("".to_string())),
             ClassicalType::Stretch(_) => Ok(Value::Timing("".to_string())),
-            _ =>  Err(RuntimeError::UnsupportedType),
+            _ =>  Err(RuntimeError::new(RuntimeErrorKind::UnsupportedType)),
         }
     }
 

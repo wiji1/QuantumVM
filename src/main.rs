@@ -1,15 +1,31 @@
-use quantum_vm::{run_file, ExecutionResult};
+use quantum_vm::{run_program, ExecutionResult, RunConfig, SourceCache, ErrorReporter};
 use std::env;
+use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     let (file_path, _json_input_path, _cli_inputs) = parse_cli_args(&args);
 
-    // TODO: Support JSON inputs and CLI inputs through RunConfig
-    let result = run_file(&file_path).unwrap_or_else(|e| {
+    let source = std::fs::read_to_string(&file_path).unwrap_or_else(|e| {
         eprintln!("Error reading file '{}': {}", file_path, e);
         std::process::exit(1);
+    });
+
+    let cache = SourceCache::new();
+    cache.add_source(file_path.clone(), source.clone());
+
+    let reporter = ErrorReporter::new(cache);
+
+    let script_path = PathBuf::from(&file_path);
+    let working_dir = script_path.parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+
+    // TODO: Support JSON inputs and CLI inputs through RunConfig
+    let result = run_program(&source, RunConfig {
+        working_dir: Some(working_dir),
+        ..Default::default()
     });
 
     match result {
@@ -22,19 +38,18 @@ fn main() {
             }
             std::process::exit(0);
         }
-        ExecutionResult::ParseError(e) => {
-            eprintln!("Parse error: {}", e);
+        ExecutionResult::ParseError(errors) => {
+            eprintln!("Parsing failed with {} error(s):\n", errors.len());
+            reporter.report_parse_errors(&file_path, &errors);
             std::process::exit(1);
         }
         ExecutionResult::TypeCheckError(errors) => {
-            eprintln!("Type checking failed with {} error(s):", errors.len());
-            for error in errors {
-                eprintln!("{}", error);
-            }
+            eprintln!("Type checking failed with {} error(s):\n", errors.len());
+            reporter.report_type_errors(&file_path, &errors);
             std::process::exit(1);
         }
         ExecutionResult::RuntimeError(e) => {
-            eprintln!("Runtime error: {}", e);
+            reporter.report_runtime_error(&file_path, &e);
             std::process::exit(101);
         }
     }

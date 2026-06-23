@@ -1,7 +1,7 @@
 use crate::lexer::{TokenType, Span};
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseError {
     UnexpectedToken {
         expected: TokenType,

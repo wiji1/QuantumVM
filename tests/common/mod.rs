@@ -8,7 +8,7 @@ pub fn run_test(filename: &str) -> ExecutionResult {
 pub fn assert_success(result: &ExecutionResult) {
     match result {
         ExecutionResult::Success { .. } => {},
-        ExecutionResult::ParseError(e) => panic!("Expected success but got parse error: {}", e),
+        ExecutionResult::ParseError(e) => panic!("Expected success but got parse error: {:?}", e),
         ExecutionResult::TypeCheckError(e) => panic!("Expected success but got type check error: {:?}", e),
         ExecutionResult::RuntimeError(e) => panic!("Expected success but got runtime error: {}", e),
     }
@@ -18,7 +18,7 @@ pub fn assert_type_error(result: &ExecutionResult) {
     match result {
         ExecutionResult::TypeCheckError(_) => {},
         ExecutionResult::Success { .. } => panic!("Expected type check error but succeeded"),
-        ExecutionResult::ParseError(e) => panic!("Expected type check error but got parse error: {}", e),
+        ExecutionResult::ParseError(e) => panic!("Expected type check error but got parse error: {:?}", e),
         ExecutionResult::RuntimeError(e) => panic!("Expected type check error but got runtime error: {}", e),
     }
 }
@@ -27,7 +27,7 @@ pub fn assert_runtime_error(result: &ExecutionResult) {
     match result {
         ExecutionResult::RuntimeError(_) => {},
         ExecutionResult::Success { .. } => panic!("Expected runtime error but succeeded"),
-        ExecutionResult::ParseError(e) => panic!("Expected runtime error but got parse error: {}", e),
+        ExecutionResult::ParseError(e) => panic!("Expected runtime error but got parse error: {:?}", e),
         ExecutionResult::TypeCheckError(e) => panic!("Expected runtime error but got type check error: {:?}", e),
     }
 }

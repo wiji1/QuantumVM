@@ -1,6 +1,6 @@
 use crate::interpreter::quantum::gates::*;
 use crate::interpreter::quantum::resolved_gate::ResolvedGate;
-use crate::interpreter::runtime_error::RuntimeError;
+use crate::interpreter::runtime_error::{RuntimeError, RuntimeErrorKind};
 use crate::interpreter::value::Value;
 use crate::parser::statement::Stmt;
 use crate::parser::supporting_types::{ClassicalType, Param, ParamType};
@@ -10,14 +10,14 @@ macro_rules! math_builtin {
     ($name:ident, $method:ident) => {
         fn $name(args: Vec<Value>) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
-                return Err(RuntimeError::InvalidArgCount(1, args.len()));
+                return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(1, args.len())));
             }
             match args[0] {
                 Value::Float(f) => Ok(Value::Float(f.$method())),
                 Value::Int(i) => Ok(Value::Float((i as f64).$method())),
-                _ => Err(RuntimeError::TypeMismatch(
+                _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch(
                     format!("{} requires numeric argument", stringify!($name))
-                )),
+                ))),
             }
         }
     };
@@ -37,31 +37,31 @@ math_builtin!(builtin_ceil, ceil);
 
 fn builtin_pow(args: Vec<Value>) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::InvalidArgCount(2, args.len()));
+        return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(2, args.len())));
     }
     let base = match &args[0] {
         Value::Float(f) => *f,
         Value::Int(i) => *i as f64,
-        _ => return Err(RuntimeError::TypeMismatch("pow requires numeric arguments".to_string())),
+        _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("pow requires numeric arguments".to_string()))),
     };
     let exp = match &args[1] {
         Value::Float(f) => *f,
         Value::Int(i) => *i as f64,
-        _ => return Err(RuntimeError::TypeMismatch("pow requires numeric arguments".to_string())),
+        _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("pow requires numeric arguments".to_string()))),
     };
     Ok(Value::Float(base.powf(exp)))
 }
 
 fn builtin_mod(args: Vec<Value>) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::InvalidArgCount(2, args.len()));
+        return Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(2, args.len())));
     }
     match (&args[0], &args[1]) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 % b)),
         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a % *b as f64)),
-        _ => Err(RuntimeError::TypeMismatch("mod requires numeric arguments".to_string())),
+        _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("mod requires numeric arguments".to_string()))),
     }
 }
 
@@ -69,26 +69,26 @@ fn builtin_sizeof(args: Vec<Value>) -> Result<Value, RuntimeError> {
     match args.len() {
         1 => match &args[0] {
             Value::Array(arr) => Ok(Value::Int(arr.len() as i64)),
-            _ => Err(RuntimeError::TypeMismatch("sizeof requires an array".to_string())),
+            _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("sizeof requires an array".to_string()))),
         },
         2 => {
             let dim = match &args[1] {
                 Value::Int(i) => *i as usize,
-                _ => return Err(RuntimeError::TypeMismatch("sizeof dimension must be int".to_string())),
+                _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("sizeof dimension must be int".to_string()))),
             };
             let mut current = &args[0];
             for _ in 0..dim {
                 match current {
                     Value::Array(arr) => current = &arr[0],
-                    _ => return Err(RuntimeError::TypeMismatch("sizeof dimension out of range".to_string())),
+                    _ => return Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("sizeof dimension out of range".to_string()))),
                 }
             }
             match current {
                 Value::Array(arr) => Ok(Value::Int(arr.len() as i64)),
-                _ => Err(RuntimeError::TypeMismatch("sizeof dimension out of range".to_string())),
+                _ => Err(RuntimeError::new(RuntimeErrorKind::TypeMismatch("sizeof dimension out of range".to_string()))),
             }
         }
-        _ => Err(RuntimeError::InvalidArgCount(1, args.len())),
+        _ => Err(RuntimeError::new(RuntimeErrorKind::InvalidArgCount(1, args.len()))),
     }
 }
 

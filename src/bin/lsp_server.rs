@@ -29,17 +29,18 @@ impl Backend {
         lexer.start();
 
         let mut parser = Parser::new(lexer.tokens);
-        let program = match parser.start(true) {
-            Ok(p) => p,
-            Err(e) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("Parse error: {:?}", e))
-                    .await;
+        let parse_result = parser.start(true);
 
-                self.publish_parse_error(uri.clone(), &e, version).await;
-                return None;
-            }
-        };
+        if !parse_result.errors.is_empty() {
+            self.client
+                .log_message(MessageType::ERROR, format!("Parse errors: {} error(s)", parse_result.errors.len()))
+                .await;
+
+            self.publish_parse_errors(uri.clone(), &parse_result.errors, version).await;
+            return None;
+        }
+
+        let program = parse_result.program;
 
         let mut type_checker = TypeChecker::new(TypeCheckConfig::default());
         let _result = type_checker.check_program(&program);
@@ -47,32 +48,37 @@ impl Backend {
         Some(type_checker)
     }
 
-    async fn publish_parse_error(&self, uri: Url, error: &quantum_vm::ParseError, version: i32) {
-        let range = if let Some(span) = error.span() {
-            self.span_to_range(span)
-        } else {
-            Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
-                },
-                end: Position {
-                    line: 0,
-                    character: 1,
-                },
-            }
-        };
+    async fn publish_parse_errors(&self, uri: Url, errors: &[quantum_vm::ParseError], version: i32) {
+        let diagnostics: Vec<Diagnostic> = errors
+            .iter()
+            .map(|error| {
+                let range = if let Some(span) = error.span() {
+                    self.span_to_range(span)
+                } else {
+                    Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    }
+                };
 
-        let diagnostic = Diagnostic {
-            range,
-            severity: Some(DiagnosticSeverity::ERROR),
-            message: error.to_string(),
-            source: Some("qasm-lsp".to_string()),
-            ..Default::default()
-        };
+                Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: error.to_string(),
+                    source: Some("qasm-lsp".to_string()),
+                    ..Default::default()
+                }
+            })
+            .collect();
 
         self.client
-            .publish_diagnostics(uri, vec![diagnostic], Some(version))
+            .publish_diagnostics(uri, diagnostics, Some(version))
             .await;
     }
 
