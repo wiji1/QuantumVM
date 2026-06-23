@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name_vm: QuantumVM
+            artifact_name_lsp: qasm-lsp
+            asset_name_vm: QuantumVM-linux-x86_64
+            asset_name_lsp: qasm-lsp-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name_vm: QuantumVM
+            artifact_name_lsp: qasm-lsp
+            asset_name_vm: QuantumVM-linux-aarch64
+            asset_name_lsp: qasm-lsp-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name_vm: QuantumVM
+            artifact_name_lsp: qasm-lsp
+            asset_name_vm: QuantumVM-macos-x86_64
+            asset_name_lsp: qasm-lsp-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name_vm: QuantumVM
+            artifact_name_lsp: qasm-lsp
+            asset_name_vm: QuantumVM-macos-aarch64
+            asset_name_lsp: qasm-lsp-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name_vm: QuantumVM.exe
+            artifact_name_lsp: qasm-lsp.exe
+            asset_name_vm: QuantumVM-windows-x86_64.exe
+            asset_name_lsp: qasm-lsp-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build QuantumVM
+        run: cargo build --release --bin QuantumVM --target ${{ matrix.target }}
+
+      - name: Build qasm-lsp
+        run: cargo build --release --bin qasm-lsp --target ${{ matrix.target }}
+
+      - name: Upload QuantumVM binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name_vm }}
+          asset_name: ${{ matrix.asset_name_vm }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload qasm-lsp binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name_lsp }}
+          asset_name: ${{ matrix.asset_name_lsp }}
+          asset_content_type: application/octet-stream
