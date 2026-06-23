@@ -90,7 +90,11 @@ pub fn run_program(source: &str, config: RunConfig) -> ExecutionResult {
 
     let program = parse_result.program;
 
-    let mut type_checker = TypeChecker::new(TypeCheckConfig::default());
+    let working_dir = config.working_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let mut type_checker = TypeChecker::new(TypeCheckConfig {
+        working_dir: Some(working_dir.clone()),
+        ..Default::default()
+    });
     let result = type_checker.check_program(&program);
 
     if !result.success {

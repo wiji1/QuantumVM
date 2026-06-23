@@ -7,6 +7,8 @@ pub mod expr_checker;
 pub mod stmt_checker;
 pub mod reference_registry;
 
+use std::path::PathBuf;
+
 use crate::parser::Program;
 use crate::type_checker::diagnostics::{Diagnostic, DiagnosticCollector};
 use crate::type_checker::type_env::TypeEnv;
@@ -18,6 +20,7 @@ pub struct TypeCheckConfig {
     pub strict_mode: bool,
     pub allow_implicit_casts: bool,
     pub collect_all_errors: bool,
+    pub working_dir: Option<PathBuf>,
 }
 
 impl Default for TypeCheckConfig {
@@ -26,6 +29,7 @@ impl Default for TypeCheckConfig {
             strict_mode: true,
             allow_implicit_casts: true,
             collect_all_errors: true,
+            working_dir: None,
         }
     }
 }

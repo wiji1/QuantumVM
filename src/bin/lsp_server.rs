@@ -42,7 +42,12 @@ impl Backend {
 
         let program = parse_result.program;
 
-        let mut type_checker = TypeChecker::new(TypeCheckConfig::default());
+        let working_dir = uri.to_file_path().ok()
+            .and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
+        let mut type_checker = TypeChecker::new(TypeCheckConfig {
+            working_dir,
+            ..Default::default()
+        });
         let _result = type_checker.check_program(&program);
 
         Some(type_checker)

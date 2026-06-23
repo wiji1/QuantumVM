@@ -8,6 +8,8 @@ use crate::type_checker::type_repr::Type;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::diagnostics::Diagnostic;
 use crate::type_checker::reference_registry::ReferenceType;
+use std::path::PathBuf;
+
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::Span;
@@ -758,8 +760,13 @@ fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Resu
 fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), StaticError> {
     if path == "stdgates.inc" { return Ok(()) }
 
-    let content = std::fs::read_to_string(path).map_err(|_| StaticError::Other {
-        message: format!("Failed to read include file: {path}"),
+    let full_path = checker.config().working_dir
+        .as_ref()
+        .map(|dir| dir.join(path))
+        .unwrap_or_else(|| PathBuf::from(path));
+
+    let content = std::fs::read_to_string(&full_path).map_err(|_| StaticError::Other {
+        message: format!("Failed to read include file: {}", full_path.display()),
     })?;
 
     check_include_from_src(checker, &path.to_string(), &content)
