@@ -59,7 +59,10 @@ impl fmt::Display for RuntimeError {
             DuplicateVariable(name) => write!(f, "Variable '{}' is already defined", name),
             DuplicateFunction(name) => write!(f, "Function '{}' is already defined", name),
             DuplicateGate(name) => write!(f, "Gate '{}' is already defined", name),
-            IndexOutOfBounds(idx, len) => write!(f, "Index {} out of bounds for length {}", idx, len),
+            IndexOutOfBounds(idx, len) => {
+                if *len == 0 { write!(f, "Index {} out of bounds (array is empty)", idx) }
+                else { write!(f, "Index {} out of bounds (valid range: 0 to {})", idx, len - 1) }
+            },
             InvalidIndex => write!(f, "Invalid index"),
             InvalidArgCount(expected, found) => write!(f, "Expected {} argument(s), found {}", expected, found),
             UndefinedFunction(name) => write!(f, "Undefined function: '{}'", name),
