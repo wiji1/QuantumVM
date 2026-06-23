@@ -5,35 +5,15 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    steps:
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
   build-release:
     name: Build Release
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -89,22 +69,15 @@ jobs:
       - name: Build qasm-lsp
         run: cargo build --release --bin qasm-lsp --target ${{ matrix.target }}
 
-      - name: Upload QuantumVM binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name_vm }}
-          asset_name: ${{ matrix.asset_name_vm }}
-          asset_content_type: application/octet-stream
+      - name: Rename binaries
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name_vm }} ${{ matrix.asset_name_vm }}
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name_lsp }} ${{ matrix.asset_name_lsp }}
 
-      - name: Upload qasm-lsp binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name_lsp }}
-          asset_name: ${{ matrix.asset_name_lsp }}
-          asset_content_type: application/octet-stream
+          files: |
+            ${{ matrix.asset_name_vm }}
+            ${{ matrix.asset_name_lsp }}
