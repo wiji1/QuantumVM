@@ -154,7 +154,7 @@ fn extract_input_declarations(program: &Program) -> HashMap<String, ClassicalTyp
     let mut declarations = HashMap::new();
 
     for stmt in &program.statements {
-        if let StmtKind::IoDecl { direction, ty, name } = &stmt.kind {
+        if let StmtKind::IoDecl { direction, ty, name, name_span: _ } = &stmt.kind {
             if matches!(direction, IoDirection::Input) {
                 declarations.insert(name.clone(), ty.clone());
             }

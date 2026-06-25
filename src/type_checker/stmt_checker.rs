@@ -33,25 +33,30 @@ fn check_stmt_with_diagnostics(checker: &mut TypeChecker, stmt: &Stmt) -> Result
 
 pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), StaticError> {
     match &stmt.kind {
-        StmtKind::QuantumDecl { name, size } => {
-            check_quantum_decl(checker, name, size, &stmt.span)
+        StmtKind::QuantumDecl { name, name_span, size } => {
+            check_quantum_decl(checker, name, name_span, size, &stmt.span)
         }
 
-        StmtKind::ClassicalDecl { ty, name, init } => {
-            check_classical_decl(checker, ty, name, init, &stmt.span)
+        StmtKind::ClassicalDecl { ty, name, name_span, init } => {
+            check_classical_decl(checker, ty, name, name_span, init, &stmt.span)
         }
 
-        StmtKind::ArrayDecl { ty, name, size, init } => {
-            check_array_decl(checker, ty, name, size, init, &stmt.span)
+        StmtKind::ArrayDecl { ty, name, name_span, size, init } => {
+            check_array_decl(checker, ty, name, name_span, size, init, &stmt.span)
         }
 
-        StmtKind::ConstDecl { ty, name, init } => {
-            check_const_decl(checker, ty, name, init, &stmt.span)
+        StmtKind::ConstDecl { ty, name, name_span, init } => {
+            check_const_decl(checker, ty, name, name_span, init, &stmt.span)
         }
 
-        StmtKind::IoDecl { direction: _, ty, name } => {
+        StmtKind::IoDecl { direction: _, ty, name, name_span } => {
             let var_type = Type::from_classical_type(ty);
-            checker.env_mut().define_with_span(name.clone(), var_type, false, Some(stmt.span.clone()))?;
+            checker.env_mut().define_with_span(name.clone(), var_type, false, Some(name_span.clone()))?;
+            checker.reference_registry_mut().add_reference(
+                name.clone(),
+                name_span.clone(),
+                ReferenceType::VariableWrite
+            );
             Ok(())
         }
 
@@ -59,16 +64,16 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
             checker.reference_registry_mut().add_reference(
                 target.name.clone(),
                 stmt.span.clone(),
-                crate::type_checker::reference_registry::ReferenceType::VariableWrite
+                ReferenceType::VariableWrite
             );
             check_assignment(checker, target, value)
         }
 
-        StmtKind::Let { name, value } => {
+        StmtKind::Let { name, name_span, value } => {
             checker.reference_registry_mut().add_reference(
                 name.clone(),
-                stmt.span.clone(),
-                crate::type_checker::reference_registry::ReferenceType::VariableWrite
+                name_span.clone(),
+                ReferenceType::VariableWrite
             );
             check_let(checker, name, value)
         }
@@ -97,12 +102,12 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
             check_return(checker, expr)
         }
 
-        StmtKind::Def { name, params, return_type, body } => {
-            check_def(checker, name, params, return_type, body, Some(stmt.span.clone()))
+        StmtKind::Def { name, name_span, params, return_type, body } => {
+            check_def(checker, name, params, return_type, body, Some(name_span.clone()))
         }
 
-        StmtKind::GateDef { name, params, qubits, body } => {
-            check_gate_def(checker, name, params, qubits, body, Some(stmt.span.clone()))
+        StmtKind::GateDef { name, name_span, params, qubits, body } => {
+            check_gate_def(checker, name, params, qubits, body, Some(name_span.clone()))
         }
 
         StmtKind::GateCall { name, modifiers: _, params, qubits } => {
@@ -110,6 +115,7 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
                 line: stmt.span.line,
                 col: stmt.span.col,
                 len: name.len(),
+                file: stmt.span.file.clone(),
             };
             checker.reference_registry_mut().add_reference(
                 name.clone(),
@@ -158,7 +164,7 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
     }
 }
 
-fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
+fn check_quantum_decl(checker: &mut TypeChecker, name: &str, name_span: &crate::lexer::Span, size: &Option<Expr>, _span: &crate::lexer::Span) -> Result<(), StaticError> {
     let qubit_type = match size {
         Some(expr) => {
             let size_type = checker.check_expression(expr)?;
@@ -176,11 +182,16 @@ fn check_quantum_decl(checker: &mut TypeChecker, name: &str, size: &Option<Expr>
         None => Type::Qubit(None),
     };
 
-    checker.env_mut().define_with_span(name.to_string(), qubit_type, false, Some(span.clone()))?;
+    checker.env_mut().define_with_span(name.to_string(), qubit_type, false, Some(name_span.clone()))?;
+    checker.reference_registry_mut().add_reference(
+        name.to_string(),
+        name_span.clone(),
+        ReferenceType::VariableWrite
+    );
     Ok(())
 }
 
-fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
+fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, name_span: &crate::lexer::Span, init: &Option<Expr>, _span: &crate::lexer::Span) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
 
     if let Some(init_expr) = init {
@@ -197,15 +208,21 @@ fn check_classical_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &st
             }
         }
 
-        checker.env_mut().define_with_span(name.to_string(), var_type, false, Some(span.clone()))?;
+        checker.env_mut().define_with_span(name.to_string(), var_type, false, Some(name_span.clone()))?;
     } else {
-        checker.env_mut().define_uninitialized_with_span(name.to_string(), var_type, false, Some(span.clone()));
+        checker.env_mut().define_uninitialized_with_span(name.to_string(), var_type, false, Some(name_span.clone()));
     }
+
+    checker.reference_registry_mut().add_reference(
+        name.to_string(),
+        name_span.clone(),
+        ReferenceType::VariableWrite
+    );
 
     Ok(())
 }
 
-fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, size: &[Expr], init: &Option<Expr>, span: &crate::lexer::Span) -> Result<(), StaticError> {
+fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, name_span: &crate::lexer::Span, size: &[Expr], init: &Option<Expr>, _span: &crate::lexer::Span) -> Result<(), StaticError> {
     let element_type = Type::from_classical_type(ty);
 
     let mut dimensions = Vec::new();
@@ -241,11 +258,16 @@ fn check_array_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, s
         }
     }
 
-    checker.env_mut().define_with_span(name.to_string(), array_type, false, Some(span.clone()))?;
+    checker.env_mut().define_with_span(name.to_string(), array_type, false, Some(name_span.clone()))?;
+    checker.reference_registry_mut().add_reference(
+        name.to_string(),
+        name_span.clone(),
+        ReferenceType::VariableWrite
+    );
     Ok(())
 }
 
-fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, init: &Expr, span: &crate::lexer::Span) -> Result<(), StaticError> {
+fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, name_span: &crate::lexer::Span, init: &Expr, _span: &crate::lexer::Span) -> Result<(), StaticError> {
     let var_type = Type::from_classical_type(ty);
     let init_type = checker.check_expression(init)?;
 
@@ -260,7 +282,12 @@ fn check_const_decl(checker: &mut TypeChecker, ty: &ClassicalType, name: &str, i
         }
     }
 
-    checker.env_mut().define_with_span(name.to_string(), var_type, true, Some(span.clone()))?;
+    checker.env_mut().define_with_span(name.to_string(), var_type, true, Some(name_span.clone()))?;
+    checker.reference_registry_mut().add_reference(
+        name.to_string(),
+        name_span.clone(),
+        ReferenceType::VariableWrite
+    );
     Ok(())
 }
 
@@ -606,9 +633,18 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
         name: name.to_string(),
         params: param_types.clone(),
         return_type: ret_type.clone(),
-        definition_span: span,
+        definition_span: span.clone(),
     };
     checker.env_mut().register_function(signature)?;
+
+    if let Some(def_span) = span {
+        checker.reference_registry_mut().add_reference(
+            name.to_string(),
+            def_span,
+            ReferenceType::FunctionCall
+        );
+    }
+
     checker.set_function_context(name.to_string(), ret_type.clone());
 
     checker.env_mut().push_scope();
@@ -657,10 +693,18 @@ pub(crate) fn check_gate_def_impl(
         name: name.to_string(),
         params: params.to_vec(),
         qubits: qubits.to_vec(),
-        definition_span: span,
+        definition_span: span.clone(),
     };
     checker.env_mut().register_gate(signature)?;
-    
+
+    if let Some(def_span) = span {
+        checker.reference_registry_mut().add_reference(
+            name.to_string(),
+            def_span,
+            ReferenceType::GateCall
+        );
+    }
+
     if !check_body { return Ok(()); }
 
     checker.env_mut().push_scope();
@@ -769,11 +813,13 @@ fn check_include(checker: &mut TypeChecker, path: &str) -> Result<(), StaticErro
         message: format!("Failed to read include file: {}", full_path.display()),
     })?;
 
-    check_include_from_src(checker, &path.to_string(), &content)
+    let full_path_str = full_path.to_str().map(|s| s.to_string()).unwrap_or_else(|| path.to_string());
+    check_include_from_src(checker, &full_path_str, &content)
 }
 
 fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &String) -> Result<(), StaticError> {
     let mut lexer = Lexer::new(content.to_string());
+    lexer.set_file_path(Some(path.clone()));
     lexer.start();
 
     let mut parser = Parser::new(lexer.tokens);
@@ -789,11 +835,11 @@ fn check_include_from_src(checker: &mut TypeChecker, path: &String, content: &St
 
     for stmt in &program.statements {
         match &stmt.kind {
-            StmtKind::GateDef { name, params, qubits, body } => {
-                check_gate_def_impl(checker, name, params, qubits, body, false, None)?;
+            StmtKind::GateDef { name, name_span, params, qubits, body } => {
+                check_gate_def_impl(checker, name, params, qubits, body, false, Some(name_span.clone()))?;
             }
-            StmtKind::Def { name, params, return_type, body } => {
-                check_def(checker, name, params, return_type, body, None)?;
+            StmtKind::Def { name, name_span, params, return_type, body } => {
+                check_def(checker, name, params, return_type, body, Some(name_span.clone()))?;
             }
             _ => {}
         }

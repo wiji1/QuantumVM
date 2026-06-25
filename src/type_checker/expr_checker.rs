@@ -46,10 +46,10 @@ impl TypeChecker {
                 self.check_binary(op, lhs, rhs)
             }
 
-            ExprKind::Call { name, args } => {
+            ExprKind::Call { name, name_span, args } => {
                 self.reference_registry_mut().add_reference(
                     name.clone(),
-                    expr.span.clone(),
+                    name_span.clone(),
                     ReferenceType::FunctionCall
                 );
                 self.check_call(name, args)

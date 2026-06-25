@@ -41,6 +41,7 @@ pub struct Lexer {
     current_line: usize,
     pub tokens: Vec<Token>,
     in_block_comment: bool,
+    file_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +49,7 @@ pub struct Span {
     pub line: usize,
     pub col: usize,
     pub len: usize,
+    pub file: Option<String>,
 }
 
 #[derive(Clone)]
@@ -58,7 +60,11 @@ pub struct Token {
 
 impl Lexer  {
     pub fn new(payload: String) -> Lexer {
-        Lexer { payload, current_line: 0, tokens: vec![], in_block_comment: false }
+        Lexer { payload, current_line: 0, tokens: vec![], in_block_comment: false, file_path: None }
+    }
+
+    pub fn set_file_path(&mut self, file_path: Option<String>) {
+        self.file_path = file_path;
     }
 
     pub fn start(&mut self) {
@@ -93,7 +99,7 @@ impl Lexer  {
             let mut char_advance = 1;
 
             let mut span = {
-                Span { line: self.current_line, col: pos, len: 0 }
+                Span { line: self.current_line, col: pos, len: 0, file: self.file_path.clone() }
             };
 
             if let Some((token, advance)) = CompoundAssignment::try_parse(&line[pos..]) {

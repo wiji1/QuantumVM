@@ -20,12 +20,14 @@ fn merge_spans(start: &Span, end: &Span) -> Span {
             line: start.line,
             col: start.col,
             len: (end.col + end.len) - start.col,
+            file: start.file.clone(),
         }
     } else {
         Span {
             line: start.line,
             col: start.col,
             len: start.len,
+            file: start.file.clone(),
         }
     }
 }
@@ -155,7 +157,7 @@ impl Parser {
         if include_lib {
             let lib_name = "stdgates.inc";
             let stdgates_source = include_str!("../lib/stdgates.inc");
-            let synthetic_span = Span { line: 0, col: 0, len: 0 };
+            let synthetic_span = Span { line: 0, col: 0, len: 0, file: None };
             statements.insert(0, Stmt::new(StmtKind::IncludeFromSrc(lib_name.to_string(), stdgates_source.to_string()), synthetic_span));
         }
 
@@ -307,7 +309,7 @@ impl Parser {
                     let rparen_span = span_from_token(self.peek());
                     expect_token!(self, TokenType::Symbol(Symbol::RParen));
                     let span = merge_spans(&start_span, &rparen_span);
-                    Expr::new(ExprKind::Call { name: s, args }, span)
+                    Expr::new(ExprKind::Call { name: s, name_span: start_span.clone(), args }, span)
                 } else if self.at(TokenType::Symbol(Symbol::LBracket)) {
                     let indices = self.parse_index_operands()?;
                     let end_span = self.tokens[self.cursor.saturating_sub(1)].span.clone();
@@ -563,6 +565,7 @@ impl Parser {
 
         let size = self.extract_index_operand()?;
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -572,7 +575,7 @@ impl Parser {
         let end_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::QuantumDecl { name, size }, span))
+        Ok(Stmt::new(StmtKind::QuantumDecl { name, name_span, size }, span))
     }
 
     fn parse_classical_type(&mut self) -> Result<ClassicalType, ParseError> {
@@ -617,6 +620,7 @@ impl Parser {
         let start_span = span_from_token(self.peek());
         let classical_type = self.parse_classical_type()?;
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -632,7 +636,7 @@ impl Parser {
         let end_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::ClassicalDecl { ty: classical_type, name, init }, span))
+        Ok(Stmt::new(StmtKind::ClassicalDecl { ty: classical_type, name, name_span, init }, span))
     }
 
     fn parse_const_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -640,6 +644,7 @@ impl Parser {
         self.advance();
         let classical_type = self.parse_classical_type()?;
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -654,22 +659,23 @@ impl Parser {
         let end_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::ConstDecl { ty: classical_type, name, init }, span))
+        Ok(Stmt::new(StmtKind::ConstDecl { ty: classical_type, name, name_span, init }, span))
     }
 
     fn parse_gate_def(&mut self) -> Result<Stmt, ParseError> {
         let start_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Keyword(Keyword::Gate));
 
-        let (name, params, qubits) = self.parse_gate_header()?;
+        let (name, name_span, params, qubits) = self.parse_gate_header()?;
         let body = self.parse_block()?;
         let end_span = self.tokens[self.cursor.saturating_sub(1)].span.clone();
 
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::GateDef { name, params, qubits, body }, span))
+        Ok(Stmt::new(StmtKind::GateDef { name, name_span, params, qubits, body }, span))
     }
 
-    fn parse_gate_header(&mut self) -> Result<(String, Vec<String>, Vec<String>), ParseError> {
+    fn parse_gate_header(&mut self) -> Result<(String, Span, Vec<String>, Vec<String>), ParseError> {
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -685,7 +691,7 @@ impl Parser {
 
         let qubits = self.parse_identifier_list(TokenType::Symbol(Symbol::LBrace))?;
 
-        Ok((name, params, qubits))
+        Ok((name, name_span, params, qubits))
     }
 
     fn parse_identifier_list(&mut self, terminator: TokenType) -> Result<Vec<String>, ParseError> {
@@ -1113,6 +1119,7 @@ impl Parser {
         let expressions = self.parse_expression_list(TokenType::Symbol(Symbol::RBracket))?;
         expect_token!(self, TokenType::Symbol(Symbol::RBracket));
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1133,6 +1140,7 @@ impl Parser {
         let stmt = Stmt::new(StmtKind::ArrayDecl {
             ty: classical_type,
             name: name,
+            name_span,
             size: expressions,
             init: init,
         }, span);
@@ -1157,6 +1165,7 @@ impl Parser {
         let call_span = merge_spans(&start_span, &semicolon_span);
         let call = Expr::new(ExprKind::Call {
             name,
+            name_span: start_span.clone(),
             args,
         }, call_span.clone());
 
@@ -1167,6 +1176,7 @@ impl Parser {
         let start_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Keyword(Keyword::Def));
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1192,7 +1202,7 @@ impl Parser {
         let end_span = self.tokens[self.cursor.saturating_sub(1)].span.clone();
 
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::Def { name, params, return_type, body }, span))
+        Ok(Stmt::new(StmtKind::Def { name, name_span, params, return_type, body }, span))
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
@@ -1314,6 +1324,7 @@ impl Parser {
 
         let classical_type = self.parse_classical_type()?;
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1324,7 +1335,7 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::IoDecl { direction, ty: classical_type, name }, span))
+        Ok(Stmt::new(StmtKind::IoDecl { direction, ty: classical_type, name, name_span }, span))
     }
 
     fn parse_include(&mut self) -> Result<Stmt, ParseError> {
@@ -1442,6 +1453,7 @@ impl Parser {
         let start_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Keyword(Keyword::Let));
 
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1455,7 +1467,7 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::Let { name, value }, span))
+        Ok(Stmt::new(StmtKind::Let { name, name_span, value }, span))
     }
 
     fn parse_gphase(&mut self) -> Result<Stmt, ParseError> {
@@ -1488,6 +1500,7 @@ impl Parser {
     fn parse_qreg(&mut self) -> Result<Stmt, ParseError> {
         let start_span = span_from_token(self.peek());
         self.advance();
+        let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1497,12 +1510,13 @@ impl Parser {
         let end_span = span_from_token(self.peek());
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
         let span = merge_spans(&start_span, &end_span);
-        Ok(Stmt::new(StmtKind::QuantumDecl { name, size }, span))
+        Ok(Stmt::new(StmtKind::QuantumDecl { name, name_span, size }, span))
     }
 
     fn parse_creg(&mut self) -> Result<Stmt, ParseError> {
         let start_span = span_from_token(self.peek());
         self.advance();
+            let name_span = span_from_token(self.peek());
             let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1515,6 +1529,7 @@ impl Parser {
         Ok(Stmt::new(StmtKind::ClassicalDecl {
             ty: ClassicalType::Bit(size),
             name,
+            name_span,
             init: None
         }, span))
     }

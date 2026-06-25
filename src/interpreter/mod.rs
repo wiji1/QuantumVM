@@ -276,7 +276,7 @@ impl Interpreter {
                 };
                 Ok(ControlFlow::Return(value))
             },
-            StmtKind::GateDef { name, params, qubits, body } => {
+            StmtKind::GateDef { name, name_span: _, params, qubits, body } => {
                 if self.functions.contains_key(name) {
                     return Err(RuntimeError::new(RuntimeErrorKind::DuplicateGate(name.to_string())));
                 }
@@ -294,7 +294,7 @@ impl Interpreter {
                     _ => self.interpret_assignment(stmt)
                 }
             },
-            StmtKind::Def { name, params, return_type, body } => {
+            StmtKind::Def { name, name_span: _, params, return_type, body } => {
                 if self.functions.contains_key(name) {
                     return Err(RuntimeError::new(RuntimeErrorKind::DuplicateFunction(name.to_string())));
                 }
@@ -332,7 +332,7 @@ impl Interpreter {
     }
 
     fn interpret_classical_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::ClassicalDecl { ty, name, init } = &stmt.kind else {
+        let StmtKind::ClassicalDecl { ty, name, name_span: _, init } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -353,7 +353,7 @@ impl Interpreter {
     }
 
     fn interpret_array_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::ArrayDecl { ty, name, size, init} = &stmt.kind else {
+        let StmtKind::ArrayDecl { ty, name, name_span: _, size, init} = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -389,7 +389,7 @@ impl Interpreter {
     }
 
     fn interpret_const_declaration(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::ConstDecl { ty: _, name, init } = &stmt.kind else {
+        let StmtKind::ConstDecl { ty: _, name, name_span: _, init } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -419,7 +419,7 @@ impl Interpreter {
             ExprKind::Measure(op) => { self.evaluate_measure(op, expr.span.clone()) }
             ExprKind::Unary { .. } => { self.evaluate_unary(expr) }
             ExprKind::Binary { .. } => { self.evaluate_binary(expr) }
-            ExprKind::Call { name, args } => { self.call_function(name, args, expr.span.clone()) }
+            ExprKind::Call { name, name_span: _, args } => { self.call_function(name, args, expr.span.clone()) }
             ExprKind::Cast { ty, expr: inner_expr } => {
                 let value = self.evaluate_expression(inner_expr)?;
                 let target_type = Type::from_classical_type(ty);
@@ -1199,7 +1199,7 @@ impl Interpreter {
 
 
     fn interpret_io_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::IoDecl { direction, ty, name } = &stmt.kind else {
+        let StmtKind::IoDecl { direction, ty, name, name_span: _ } = &stmt.kind else {
             unreachable!("Incorrect statement signature!");
         };
 
@@ -1271,7 +1271,7 @@ impl Interpreter {
     }
 
     fn interpret_quantum_decl(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::QuantumDecl { name, size } = &stmt.kind else {
+        let StmtKind::QuantumDecl { name, name_span: _, size } = &stmt.kind else {
             unreachable!();
         };
 
@@ -1360,7 +1360,7 @@ impl Interpreter {
             let mut args: Vec<Expr> = params.clone();
             for qubit in qubits {
                 match qubit {
-                    GateOperand::Ident(ident) => args.push(Expr::new(ExprKind::IndexedIdent(ident.clone()), crate::lexer::Span { line: 0, col: 0, len: 0 })),
+                    GateOperand::Ident(ident) => args.push(Expr::new(ExprKind::IndexedIdent(ident.clone()), crate::lexer::Span { line: 0, col: 0, len: 0, file: None })),
                     GateOperand::HardwareQubit(_) => {}
                 }
             }
@@ -1569,7 +1569,7 @@ impl Interpreter {
     }
 
     fn interpret_let(&mut self, stmt: &Stmt) -> Result<ControlFlow, RuntimeError> {
-        let StmtKind::Let { name, value} = &stmt.kind else {
+        let StmtKind::Let { name, name_span: _, value} = &stmt.kind else {
             unreachable!();
         };
 

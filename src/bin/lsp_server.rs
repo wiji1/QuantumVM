@@ -26,6 +26,8 @@ impl Backend {
 
     async fn parse_document(&self, text: &str, uri: &Url, version: i32) -> Option<TypeChecker> {
         let mut lexer = Lexer::new(text.to_string());
+        let file_path = uri.to_file_path().ok().and_then(|p| p.to_str().map(|s| s.to_string()));
+        lexer.set_file_path(file_path);
         lexer.start();
 
         let mut parser = Parser::new(lexer.tokens);
@@ -102,6 +104,12 @@ impl Backend {
 
     fn position_to_coords(&self, position: Position) -> (usize, usize) {
         (position.line as usize, position.character as usize)
+    }
+
+    fn span_to_uri(&self, span: &Span, current_uri: &Url) -> Url {
+        if let Some(ref file_path) = span.file {
+            Url::from_file_path(file_path).unwrap_or_else(|_| current_uri.clone())
+        } else { current_uri.clone() }
     }
 
     async fn publish_diagnostics(&self, uri: Url, type_checker: &TypeChecker, version: i32) {
@@ -242,13 +250,6 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
         let (line, col) = self.position_to_coords(position);
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("goto_definition: position {}:{} -> coords {}:{}", position.line, position.character, line, col)
-            )
-            .await;
-
         let doc = match self.documents.get(&uri) {
             Some(doc) => doc,
             None => return Ok(None),
@@ -262,21 +263,13 @@ impl LanguageServer for Backend {
         let lsp_query = LspQuery::new(type_checker);
 
         if let Some(def_span) = lsp_query.find_definition(line, col) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Found definition at span line:{} col:{} len:{}", def_span.line, def_span.col, def_span.len)
-                )
-                .await;
             let range = self.span_to_range(&def_span);
+            let target_uri = self.span_to_uri(&def_span, &params.text_document_position_params.text_document.uri);
             Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                uri: params.text_document_position_params.text_document.uri,
+                uri: target_uri,
                 range,
             })))
         } else {
-            self.client
-                .log_message(MessageType::INFO, "No definition found")
-                .await;
             Ok(None)
         }
     }
@@ -299,13 +292,24 @@ impl LanguageServer for Backend {
         let lsp_query = LspQuery::new(type_checker);
         let ref_spans = lsp_query.find_references(line, col);
 
-        let locations: Vec<Location> = ref_spans
+        let current_uri = &params.text_document_position.text_document.uri;
+        let mut locations: Vec<Location> = ref_spans
             .iter()
             .map(|span| Location {
-                uri: params.text_document_position.text_document.uri.clone(),
+                uri: self.span_to_uri(span, current_uri),
                 range: self.span_to_range(span),
             })
             .collect();
+
+        if !params.context.include_declaration {
+            if let Some(def_span) = lsp_query.find_definition(line, col) {
+                let def_range = self.span_to_range(&def_span);
+                let def_uri = self.span_to_uri(&def_span, current_uri);
+                locations.retain(|loc| {
+                    loc.uri != def_uri || loc.range != def_range
+                });
+            }
+        }
 
         Ok(Some(locations))
     }
@@ -318,13 +322,6 @@ impl LanguageServer for Backend {
             .to_string();
         let position = params.text_document_position_params.position;
         let (line, col) = self.position_to_coords(position);
-
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("hover: position {}:{} -> coords {}:{}", position.line, position.character, line, col)
-            )
-            .await;
 
         let doc = match self.documents.get(&uri) {
             Some(doc) => doc,
@@ -339,9 +336,6 @@ impl LanguageServer for Backend {
         let lsp_query = LspQuery::new(type_checker);
 
         if let Some(hover_info) = lsp_query.get_hover_info(line, col) {
-            self.client
-                .log_message(MessageType::INFO, format!("Found hover info: {}", hover_info))
-                .await;
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -349,12 +343,7 @@ impl LanguageServer for Backend {
                 }),
                 range: None,
             }))
-        } else {
-            self.client
-                .log_message(MessageType::INFO, "No hover info found")
-                .await;
-            Ok(None)
-        }
+        } else { Ok(None) }
     }
 }
 

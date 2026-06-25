@@ -4,11 +4,11 @@ use crate::parser::supporting_types::*;
 
 #[derive(Debug, Clone)]
 pub enum StmtKind {
-    QuantumDecl { name: String, size: Option<Expr> },
-    ClassicalDecl { ty: ClassicalType, name: String, init: Option<Expr> },
-    ArrayDecl { ty: ClassicalType, name: String, size: Vec<Expr>, init: Option<Expr> },
-    ConstDecl { ty: ClassicalType, name: String, init: Expr },
-    IoDecl { direction: IoDirection, ty: ClassicalType, name: String },
+    QuantumDecl { name: String, name_span: Span, size: Option<Expr> },
+    ClassicalDecl { ty: ClassicalType, name: String, name_span: Span, init: Option<Expr> },
+    ArrayDecl { ty: ClassicalType, name: String, name_span: Span, size: Vec<Expr>, init: Option<Expr> },
+    ConstDecl { ty: ClassicalType, name: String, name_span: Span, init: Expr },
+    IoDecl { direction: IoDirection, ty: ClassicalType, name: String, name_span: Span },
 
     GateCall { name: String, modifiers: Vec<GateModifier>, params: Vec<Expr>, qubits: Vec<GateOperand> },
     ExpressionStatement(Expr),
@@ -23,11 +23,11 @@ pub enum StmtKind {
     Break,
     Return(Option<Expr>),
 
-    Def { name: String, params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
-    GateDef { name: String, params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
+    Def { name: String, name_span: Span, params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
+    GateDef { name: String, name_span: Span, params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
 
     Assign { target: IndexedIdent, op: AssignOp, value: Expr },
-    Let { name: String, value: Expr },
+    Let { name: String, name_span: Span, value: Expr },
     Extern { name: String },
 
     Block(Vec<Stmt>),
