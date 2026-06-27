@@ -6,7 +6,10 @@ pub enum ReferenceType {
     VariableRead,
     VariableWrite,
     FunctionCall,
+    FunctionDefinition,
     GateCall,
+    GateDefinition,
+    ParameterDefinition,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +52,7 @@ impl ReferenceRegistry {
             for reference in refs {
                 if reference.span.line == line
                     && col >= reference.span.col
-                    && col < reference.span.col + reference.span.len {
+                    && col <= reference.span.col + reference.span.len {
                     results.push(reference.clone());
                 }
             }
@@ -63,7 +66,7 @@ impl ReferenceRegistry {
             for reference in refs {
                 if reference.span.line == line
                     && col >= reference.span.col
-                    && col < reference.span.col + reference.span.len {
+                    && col <= reference.span.col + reference.span.len {
                     return Some(symbol_name.clone());
                 }
             }

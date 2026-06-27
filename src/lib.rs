@@ -1,7 +1,7 @@
 pub mod lexer;
 pub mod parser;
 mod interpreter;
-mod type_checker;
+pub mod type_checker;
 mod coercion;
 mod input_resolver;
 pub mod source_cache;
@@ -18,7 +18,7 @@ use crate::parser::supporting_types::{IoDirection, ClassicalType};
 use crate::parser::statement::StmtKind;
 use crate::parser::Program;
 use std::collections::HashMap;
-
+use tower_lsp::lsp_types::{Position, Range};
 pub use crate::interpreter::value::Value;
 pub use crate::interpreter::runtime_error::RuntimeError;
 pub use crate::parser::parse_error::ParseError;
@@ -162,4 +162,17 @@ fn extract_input_declarations(program: &Program) -> HashMap<String, ClassicalTyp
     }
 
     declarations
+}
+
+pub fn span_to_range(span: &Span) -> Range {
+    Range {
+        start: Position {
+            line: span.line as u32,
+            character: span.col as u32,
+        },
+        end: Position {
+            line: span.line as u32,
+            character: (span.col + span.len) as u32,
+        },
+    }
 }

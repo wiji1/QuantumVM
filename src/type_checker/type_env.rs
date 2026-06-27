@@ -221,7 +221,23 @@ impl TypeEnv {
     }
 
     pub fn register_gate(&mut self, sig: GateSignature) -> Result<(), StaticError> {
-        if self.gates.contains_key(&sig.name) {
+        if let Some(existing) = self.gates.get(&sig.name) {
+            if existing.definition_span.is_none() {
+                self.gates.insert(sig.name.clone(), sig);
+                return Ok(());
+            }
+
+            let existing_is_stdgates = existing.definition_span.as_ref()
+                .and_then(|s| s.file.as_ref()).map(|f| f.contains("stdgates.inc")).unwrap_or(false);
+
+            let new_is_stdgates = sig.definition_span.as_ref()
+                .and_then(|s| s.file.as_ref()).map(|f| f.contains("stdgates.inc")).unwrap_or(false);
+
+            if existing_is_stdgates && new_is_stdgates {
+                self.gates.insert(sig.name.clone(), sig);
+                return Ok(());
+            }
+
             return Err(StaticError::DuplicateGateDefinition { name: sig.name.clone() });
         }
         self.gates.insert(sig.name.clone(), sig);
@@ -233,6 +249,30 @@ impl TypeEnv {
 
         let name_upper = name.to_uppercase();
         self.gates.get(&name_upper)
+    }
+
+    pub fn get_all_bindings(&self) -> Vec<(String, &TypeBinding)> {
+        let mut bindings = Vec::new();
+        let mut seen = HashSet::new();
+
+        for scope in self.scopes.iter().rev() {
+            for (name, binding) in scope {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    bindings.push((name.clone(), binding));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    pub fn get_all_functions(&self) -> Vec<(String, &FunctionSignature)> {
+        self.functions.iter().map(|(name, sig)| (name.clone(), sig)).collect()
+    }
+
+    pub fn get_all_gates(&self) -> Vec<(String, &GateSignature)> {
+        self.gates.iter().map(|(name, sig)| (name.clone(), sig)).collect()
     }
 
     pub fn scope_depth(&self) -> usize {

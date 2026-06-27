@@ -42,6 +42,7 @@ pub enum GateOperand {
 pub struct IndexedIdent {
     pub name: String,
     pub indices: Vec<Expr>,
+    pub span: Option<crate::lexer::Span>,
 }
 
 #[derive(Debug, Clone)]

@@ -61,9 +61,15 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
         }
 
         StmtKind::Assign { target, op: _, value } => {
+            let name_span = Span {
+                line: stmt.span.line,
+                col: stmt.span.col,
+                len: target.name.len(),
+                file: stmt.span.file.clone(),
+            };
             checker.reference_registry_mut().add_reference(
                 target.name.clone(),
-                stmt.span.clone(),
+                name_span,
                 ReferenceType::VariableWrite
             );
             check_assignment(checker, target, value)
@@ -75,7 +81,7 @@ pub fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), Sta
                 name_span.clone(),
                 ReferenceType::VariableWrite
             );
-            check_let(checker, name, value)
+            check_let(checker, name, name_span, value)
         }
 
         StmtKind::If { cond, then, else_ } => {
@@ -318,9 +324,9 @@ fn check_assignment(checker: &mut TypeChecker, target: &IndexedIdent, value: &Ex
     Ok(())
 }
 
-fn check_let(checker: &mut TypeChecker, name: &str, value: &Expr) -> Result<(), StaticError> {
+fn check_let(checker: &mut TypeChecker, name: &str, name_span: &Span, value: &Expr) -> Result<(), StaticError> {
     let value_type = checker.check_expression(value)?;
-    checker.env_mut().define(name.to_string(), value_type, true)?;
+    checker.env_mut().define_with_span(name.to_string(), value_type, true, Some(name_span.clone()))?;
     Ok(())
 }
 
@@ -641,7 +647,7 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
         checker.reference_registry_mut().add_reference(
             name.to_string(),
             def_span,
-            ReferenceType::FunctionCall
+            ReferenceType::FunctionDefinition
         );
     }
 
@@ -672,8 +678,8 @@ pub fn check_def(checker: &mut TypeChecker, name: &str, params: &[Param], return
 fn check_gate_def(
     checker: &mut TypeChecker,
     name: &str,
-    params: &[String],
-    qubits: &[String],
+    params: &[(String, Span)],
+    qubits: &[(String, Span)],
     body: &[Stmt],
     span: Option<Span>,
 ) -> Result<(), StaticError> {
@@ -683,16 +689,16 @@ fn check_gate_def(
 pub(crate) fn check_gate_def_impl(
     checker: &mut TypeChecker,
     name: &str,
-    params: &[String],
-    qubits: &[String],
+    params: &[(String, Span)],
+    qubits: &[(String, Span)],
     body: &[Stmt],
     check_body: bool,
     span: Option<Span>,
 ) -> Result<(), StaticError> {
     let signature = GateSignature {
         name: name.to_string(),
-        params: params.to_vec(),
-        qubits: qubits.to_vec(),
+        params: params.iter().map(|(name, _)| name.clone()).collect(),
+        qubits: qubits.iter().map(|(name, _)| name.clone()).collect(),
         definition_span: span.clone(),
     };
     checker.env_mut().register_gate(signature)?;
@@ -701,7 +707,7 @@ pub(crate) fn check_gate_def_impl(
         checker.reference_registry_mut().add_reference(
             name.to_string(),
             def_span,
-            ReferenceType::GateCall
+            ReferenceType::GateDefinition
         );
     }
 
@@ -709,12 +715,32 @@ pub(crate) fn check_gate_def_impl(
 
     checker.env_mut().push_scope();
 
-    for param in params {
-        checker.env_mut().define(param.clone(), Type::Angle(None), false)?;
+    for (param_name, param_span) in params {
+        checker.env_mut().define_with_span(
+            param_name.clone(),
+            Type::Angle(None),
+            false,
+            Some(param_span.clone())
+        )?;
+        checker.reference_registry_mut().add_reference(
+            param_name.clone(),
+            param_span.clone(),
+            ReferenceType::ParameterDefinition
+        );
     }
 
-    for qubit in qubits {
-        checker.env_mut().define(qubit.clone(), Type::Qubit(None), false)?;
+    for (qubit_name, qubit_span) in qubits {
+        checker.env_mut().define_with_span(
+            qubit_name.clone(),
+            Type::Qubit(None),
+            false,
+            Some(qubit_span.clone())
+        )?;
+        checker.reference_registry_mut().add_reference(
+            qubit_name.clone(),
+            qubit_span.clone(),
+            ReferenceType::ParameterDefinition
+        );
     }
 
     for stmt in body {
@@ -787,6 +813,14 @@ fn check_gate_call(checker: &mut TypeChecker, name: &str, params: &[Expr], qubit
 fn check_qubit_operand(checker: &mut TypeChecker, operand: &GateOperand) -> Result<(), StaticError> {
     match operand {
         GateOperand::Ident(indexed) => {
+            if let Some(span) = &indexed.span {
+                checker.reference_registry_mut().add_reference(
+                    indexed.name.clone(),
+                    span.clone(),
+                    ReferenceType::VariableRead
+                );
+            }
+
             let qubit_type = checker.check_indexed_ident(indexed)?;
             if !matches!(qubit_type, Type::Qubit(_)) {
                 return Err(StaticError::TypeMismatch {

@@ -3,6 +3,9 @@ pub mod statement;
 pub mod parse_error;
 pub mod supporting_types;
 
+pub const STDGATES_FILENAME: &str = "stdgates.inc";
+pub const STDGATES_CONTENT: &str = include_str!("../lib/stdgates.inc");
+
 use crate::lexer::identifier::Identifier;
 use crate::lexer::keyword::Keyword;
 use crate::lexer::literal::Literal;
@@ -155,10 +158,8 @@ impl Parser {
         }
 
         if include_lib {
-            let lib_name = "stdgates.inc";
-            let stdgates_source = include_str!("../lib/stdgates.inc");
             let synthetic_span = Span { line: 0, col: 0, len: 0, file: None };
-            statements.insert(0, Stmt::new(StmtKind::IncludeFromSrc(lib_name.to_string(), stdgates_source.to_string()), synthetic_span));
+            statements.insert(0, Stmt::new(StmtKind::IncludeFromSrc(STDGATES_FILENAME.to_string(), STDGATES_CONTENT.to_string()), synthetic_span));
         }
 
         ParseResult {
@@ -316,7 +317,15 @@ impl Parser {
                     let span = merge_spans(&start_span, &end_span);
 
                     if indices.is_empty() { Expr::new(ExprKind::Ident(s), start_span.clone()) }
-                    else { Expr::new(ExprKind::IndexedIdent(IndexedIdent { name: s, indices }), span) }
+                    else {
+                        let name_span = Span {
+                            line: start_span.line,
+                            col: start_span.col,
+                            len: s.len(),
+                            file: start_span.file.clone(),
+                        };
+                        Expr::new(ExprKind::IndexedIdent(IndexedIdent { name: s, indices, span: Some(name_span) }), span)
+                    }
                 } else { Expr::new(ExprKind::Ident(s), start_span.clone()) }
             }
             TokenType::Symbol(Symbol::Minus)
@@ -674,7 +683,7 @@ impl Parser {
         Ok(Stmt::new(StmtKind::GateDef { name, name_span, params, qubits, body }, span))
     }
 
-    fn parse_gate_header(&mut self) -> Result<(String, Span, Vec<String>, Vec<String>), ParseError> {
+    fn parse_gate_header(&mut self) -> Result<(String, Span, Vec<(String, Span)>, Vec<(String, Span)>), ParseError> {
         let name_span = span_from_token(self.peek());
         let name = extract_token!(
             self,
@@ -685,21 +694,22 @@ impl Parser {
         let mut params = vec![];
         if self.at(TokenType::Symbol(Symbol::LParen)) {
             self.advance();
-            params = self.parse_identifier_list(TokenType::Symbol(Symbol::RParen))?;
+            params = self.parse_identifier_list_with_spans(TokenType::Symbol(Symbol::RParen))?;
             expect_token!(self, TokenType::Symbol(Symbol::RParen));
         }
 
-        let qubits = self.parse_identifier_list(TokenType::Symbol(Symbol::LBrace))?;
+        let qubits = self.parse_identifier_list_with_spans(TokenType::Symbol(Symbol::LBrace))?;
 
         Ok((name, name_span, params, qubits))
     }
 
-    fn parse_identifier_list(&mut self, terminator: TokenType) -> Result<Vec<String>, ParseError> {
+    fn parse_identifier_list_with_spans(&mut self, terminator: TokenType) -> Result<Vec<(String, Span)>, ParseError> {
         let mut items = vec![];
         while !self.at(terminator.clone()) && !self.is_at_end() {
             self.skip_trivia();
             if self.at(terminator.clone()) { break; }
 
+            let span = self.peek().span.clone();
             let s = match self.peek().kind.clone() {
                 TokenType::Identifier(Identifier::Identifier(s)) => {
                     self.advance();
@@ -716,7 +726,7 @@ impl Parser {
                     span: self.peek().span.clone(),
                 })
             };
-            items.push(s);
+            items.push((s, span));
             if self.at(TokenType::Symbol(Symbol::Comma)) { self.advance(); }
         }
         Ok(items)
@@ -765,6 +775,7 @@ impl Parser {
             return Ok(GateOperand::HardwareQubit(n as u32));
         }
 
+        let name_span = self.peek().span.clone();
         let name = match self.peek().kind.clone() {
             TokenType::Identifier(Identifier::Identifier(s)) => {
                 self.advance();
@@ -784,7 +795,7 @@ impl Parser {
 
         let indices = self.parse_index_operands()?;
 
-        Ok(GateOperand::Ident(IndexedIdent { name, indices }))
+        Ok(GateOperand::Ident(IndexedIdent { name, indices, span: Some(name_span) }))
     }
 
     fn parse_gate_call(&mut self) -> Result<Stmt, ParseError> {
@@ -957,8 +968,14 @@ impl Parser {
         expect_token!(self, TokenType::Symbol(Symbol::Semicolon));
 
         let span = merge_spans(&start_span, &end_span);
+        let name_span = Span {
+            line: start_span.line,
+            col: start_span.col,
+            len: name.len(),
+            file: start_span.file.clone(),
+        };
         Ok(Stmt::new(StmtKind::Assign {
-            target: IndexedIdent { name, indices },
+            target: IndexedIdent { name, indices, span: Some(name_span) },
             op,
             value
         }, span))
@@ -1363,6 +1380,7 @@ impl Parser {
 
         if self.at(TokenType::CompoundSymbol(CompoundSymbol::Arrow)) {
             self.advance();
+            let name_start_span = self.peek().span.clone();
             let name = extract_token!(
             self,
             TokenType::Identifier(Identifier::Identifier(s)) => s,
@@ -1376,8 +1394,14 @@ impl Parser {
 
             let measure_span = merge_spans(&start_span, &self.tokens[self.cursor.saturating_sub(2)].span);
             let stmt_span = merge_spans(&start_span, &end_span);
+            let name_span = Span {
+                line: name_start_span.line,
+                col: name_start_span.col,
+                len: name.len(),
+                file: name_start_span.file.clone(),
+            };
             Ok(Stmt::new(StmtKind::Assign {
-                target: IndexedIdent { name, indices },
+                target: IndexedIdent { name, indices, span: Some(name_span) },
                 op: AssignOp::Eq,
                 value: Expr::new(ExprKind::Measure(Box::new(qubit)), measure_span),
             }, stmt_span))

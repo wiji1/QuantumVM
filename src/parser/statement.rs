@@ -24,7 +24,7 @@ pub enum StmtKind {
     Return(Option<Expr>),
 
     Def { name: String, name_span: Span, params: Vec<Param>, return_type: Option<ClassicalType>, body: Vec<Stmt> },
-    GateDef { name: String, name_span: Span, params: Vec<String>, qubits: Vec<String>, body: Vec<Stmt> },
+    GateDef { name: String, name_span: Span, params: Vec<(String, Span)>, qubits: Vec<(String, Span)>, body: Vec<Stmt> },
 
     Assign { target: IndexedIdent, op: AssignOp, value: Expr },
     Let { name: String, name_span: Span, value: Expr },

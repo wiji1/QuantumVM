@@ -281,8 +281,8 @@ impl Interpreter {
                     return Err(RuntimeError::new(RuntimeErrorKind::DuplicateGate(name.to_string())));
                 }
                 self.functions.insert(name.to_string(), Function::Gate {
-                    params: params.clone(),
-                    qubits: qubits.clone(),
+                    params: params.iter().map(|(name, _)| name.clone()).collect(),
+                    qubits: qubits.iter().map(|(name, _)| name.clone()).collect(),
                     body: body.clone(),
                 });
 
@@ -663,6 +663,7 @@ impl Interpreter {
                     self.evaluate_indexed_ident(&IndexedIdent {
                         name: target.name.clone(),
                         indices: target.indices.clone(),
+                        span: None,
                     }, stmt.span.clone())?
                 };
                 self.apply_binary_op(bin_op, current, rhs, stmt.span.clone())?

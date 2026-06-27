@@ -30,9 +30,15 @@ impl TypeChecker {
             }
 
             ExprKind::IndexedIdent(indexed) => {
+                let name_span = indexed.span.clone().unwrap_or_else(|| crate::lexer::Span {
+                    line: expr.span.line,
+                    col: expr.span.col,
+                    len: indexed.name.len(),
+                    file: expr.span.file.clone(),
+                });
                 self.reference_registry_mut().add_reference(
                     indexed.name.clone(),
-                    expr.span.clone(),
+                    name_span,
                     ReferenceType::VariableRead
                 );
                 self.check_indexed_ident(indexed)
@@ -321,6 +327,14 @@ impl TypeChecker {
 
         match operand {
             GateOperand::Ident(indexed) => {
+                if let Some(span) = &indexed.span {
+                    self.reference_registry_mut().add_reference(
+                        indexed.name.clone(),
+                        span.clone(),
+                        ReferenceType::VariableRead
+                    );
+                }
+
                 let qubit_type = self.check_indexed_ident(indexed)?;
 
                 match qubit_type {

@@ -34,7 +34,6 @@ impl ErrorReporter {
             }
         };
 
-        // Extract span from error to get the offset for the report header
         let header_offset = match error {
             ParseError::UnexpectedToken { span, .. } => self.span_to_offset(&source, span),
             ParseError::InvalidLiteral { span, .. } => self.span_to_offset(&source, span),
