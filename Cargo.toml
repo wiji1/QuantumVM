@@ -2,6 +2,14 @@
 name = "QuantumVM"
 version = "0.1.0"
 edition = "2024"
+description = "OpenQASM 3.0 language server and runtime"
+homepage = "https://github.com/wiji1/QuantumVM"
+repository = "https://github.com/wiji1/QuantumVM"
+license = "MIT"
+
+[package.metadata.deb]
+maintainer = "wiji"
+copyright = "2026 QuantumVM Team"
 
 [lib]
 name = "quantum_vm"
@@ -28,3 +36,7 @@ tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 dashmap = "6.0"
 env_logger = "0.11"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

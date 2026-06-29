@@ -1,0 +1,126 @@
+name: Build .deb & Deploy APT Repo
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    name: Build .deb (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb
+        run: cargo deb --target ${{ matrix.target }} --no-strip
+
+      - name: Upload .deb to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} target/${{ matrix.target }}/debian/*.deb --clobber
+
+      - name: Upload .deb as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/debian/*.deb
+
+  deploy-apt-repo:
+    name: Deploy APT repo to GitHub Pages
+    needs: build-deb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download .deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: debs-*
+          path: debs
+          merge-multiple: true
+
+      - name: Create APT repo structure
+        run: |
+          mkdir -p repo/pool/main/quantumvm
+          mkdir -p repo/dists/stable/main/binary-amd64
+          mkdir -p repo/dists/stable/main/binary-arm64
+
+      - name: Copy .deb files to pool
+        run: |
+          if [ -d "debs" ]; then
+            cp debs/*.deb repo/pool/main/quantumvm/ 2>/dev/null || true
+          fi
+          echo "Files in pool:"
+          find repo/pool -type f
+
+      - name: Generate APT metadata
+        run: |
+          cd repo
+
+          if [ -n "$(find pool -name '*.deb' 2>/dev/null)" ]; then
+            dpkg-scanpackages --arch amd64 pool/ 2>/dev/null | tee dists/stable/main/binary-amd64/Packages || true
+            dpkg-scanpackages --arch arm64 pool/ 2>/dev/null | tee dists/stable/main/binary-arm64/Packages || true
+            gzip -kf dists/stable/main/binary-amd64/Packages 2>/dev/null || true
+            gzip -kf dists/stable/main/binary-arm64/Packages 2>/dev/null || true
+          else
+            echo "No .deb files found — creating empty Packages files"
+            touch dists/stable/main/binary-amd64/Packages
+            touch dists/stable/main/binary-arm64/Packages
+          fi
+
+          cat > dists/stable/Release << RELEASE
+          Origin: QuantumVM
+          Label: QuantumVM APT Repository
+          Suite: stable
+          Codename: stable
+          Date: $(date -Ru)
+          Architectures: amd64 arm64
+          Components: main
+          Description: APT repository for QuantumVM — OpenQASM 3.0 tooling
+          RELEASE
+
+          cat > index.html << HTML
+          <!DOCTYPE html>
+          <html>
+          <head><title>QuantumVM APT Repository</title></head>
+          <body>
+            <h1>QuantumVM APT Repository</h1>
+            <pre>
+          Add this repository to your APT sources:
+            echo 'deb [trusted=yes] https://wiji1.github.io/QuantumVM/ stable main' | sudo tee /etc/apt/sources.list.d/quantumvm.list
+            sudo apt update
+            sudo apt install quantumvm
+
+          Available architectures: amd64, arm64
+            </pre>
+          </body>
+          </html>
+          HTML
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo
+          force_orphan: true

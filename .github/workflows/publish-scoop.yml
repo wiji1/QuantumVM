@@ -1,0 +1,74 @@
+name: Publish Scoop Manifest
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish-scoop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get release info
+        id: info
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download and hash Windows zip
+        id: hash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/scoop
+          gh release download "${{ github.event.release.tag_name }}" \
+            --pattern "QuantumVM-x86_64-pc-windows-msvc.zip" \
+            --dir /tmp/scoop
+          HASH=$(sha256sum /tmp/scoop/QuantumVM-x86_64-pc-windows-msvc.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Scoop manifest
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          TAG="${{ steps.info.outputs.tag }}"
+          HASH="${{ steps.hash.outputs.hash }}"
+
+          mkdir -p bucket
+
+          cat > bucket/quantumvm.json << MANIFEST
+          {
+            "version": "${VERSION}",
+            "description": "OpenQASM 3.0 language server and runtime",
+            "homepage": "https://github.com/wiji1/QuantumVM",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/wiji1/QuantumVM/releases/download/${TAG}/QuantumVM-x86_64-pc-windows-msvc.zip",
+                "hash": "${HASH}"
+              }
+            },
+            "bin": [
+              "QuantumVM.exe",
+              "qasm-lsp.exe"
+            ],
+            "checkver": "github",
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/wiji1/QuantumVM/releases/download/\$version/QuantumVM-x86_64-pc-windows-msvc.zip"
+                }
+              }
+            }
+          }
+          MANIFEST
+
+      - name: Push to scoop-bucket
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          external_repository: wiji1/scoop-bucket
+          personal_token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          publish_dir: ./bucket
+          publish_branch: main
