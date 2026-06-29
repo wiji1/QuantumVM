@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "QuantumVM"
-version = "0.1.0"
+version = "0.0.8"
 dependencies = [
  "ariadne",
  "dashmap 6.2.1",

@@ -1,6 +1,6 @@
 [package]
 name = "QuantumVM"
-version = "0.1.0"
+version = "0.0.8"
 edition = "2024"
 description = "OpenQASM 3.0 language server and runtime"
 homepage = "https://github.com/wiji1/QuantumVM"
