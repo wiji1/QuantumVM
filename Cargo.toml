@@ -1,6 +1,6 @@
 [package]
 name = "QuantumVM"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2024"
 description = "OpenQASM 3.0 language server and runtime"
 homepage = "https://github.com/wiji1/QuantumVM"
@@ -10,6 +10,9 @@ license = "MIT"
 [package.metadata.deb]
 maintainer = "wiji"
 copyright = "2026 QuantumVM Team"
+
+[package.metadata.dist]
+formula = "quantumvm"
 
 [lib]
 name = "quantum_vm"
